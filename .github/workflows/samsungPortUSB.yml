@@ -1,6 +1,6 @@
 - name: Initialize and Sync Kernel Source by Pankaj
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
+working-directory: ${{ env.KERNEL_ROOT }}
+  run: |
         FORMATTED_BRANCH="android13-5.15-lts"
         repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16 --depth=1
         repo sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
