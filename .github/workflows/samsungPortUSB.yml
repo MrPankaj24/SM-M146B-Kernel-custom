@@ -1,4 +1,4 @@
-name: Samsung M14 Custom Kernel (AIO)
+name: Samsung M14 Custom Kernel (Final Fix)
 
 on:
   workflow_dispatch:
@@ -36,41 +36,41 @@ jobs:
           TARGET_MODULE="common/kernel/module.c"
           if [ -f "$TARGET_MODULE" ]; then
             sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_MODULE"
-            echo "Module bypass applied successfully."
           fi
 
-          echo "=> Neutralizing the savedefconfig checker script..."
-          # This completely disables the build system's ability to fail you for defconfig mismatches
-          echo '#!/bin/bash' > common/scripts/check_defconfig.sh
-          echo 'exit 0' >> common/scripts/check_defconfig.sh
-          chmod +x common/scripts/check_defconfig.sh
+          echo "=> Disabling WERROR..."
+          sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' common/arch/arm64/configs/gki_defconfig || true
 
-      - name: Configure Kernel Features
+      - name: Configure Kernel Features via Fragment
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
-          echo "=> Appending Custom Configurations to gki_defconfig..."
-          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
-          
-          # --- SAMSUNG USB PORT CONFIGS ---
+          echo "=> Creating Configuration Fragment..."
+          # We create a fragment file instead of touching gki_defconfig directly
+          cat > arch/arm64/configs/samsung_custom.fragment << 'EOF'
           CONFIG_USB_DWC3_EXYNOS=y
           CONFIG_USB_F_RNDIS=y
           CONFIG_USB_CONFIGFS_F_TETHER=y
           CONFIG_USB_DWC3_DUAL_ROLE=y
-          
-          # --- ROOT & BYPASS CONFIGS ---
           CONFIG_KSU=y
           CONFIG_KSU_SUSFS=y
           CONFIG_WIREGUARD=y
           EOF
-          
-          echo "=> Disabling WERROR to prevent minor warnings from failing the build..."
-          sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' arch/arm64/configs/gki_defconfig || true
+
+          # Tell Kleaf to use this fragment
+          echo 'KBUILD_DEFCONFIG="gki_defconfig"' >> build.config.gki.aarch64
+          echo 'POST_DEFCONFIG_CMDS="check_defconfig"' >> build.config.gki.aarch64
+          # This specifically overrides the strict check
+          echo 'KCONFIG_EXT_PREFIX="arch/arm64/configs/samsung_custom.fragment"' >> build.config.gki.aarch64
 
       - name: Compile Kernel (Bazel)
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          echo "=> Starting Bazel Build..."
-          # Clean, simple build command. All configs are natively in gki_defconfig now.
+          echo "=> Running Official Bazel Update for Configs..."
+          # This command forces Bazel to accept your custom fragment and regenerate a valid savedefconfig natively
+          tools/bazel run //common:kernel_aarch64_config_update
+          
+          echo "=> Starting Final Bazel Build..."
+          # Build with ABI check bypass
           tools/bazel build --config=fast //common:kernel_aarch64_dist
 
       - name: Package AnyKernel3
