@@ -24,7 +24,6 @@ jobs:
       - name: Sync GKI 5.15 LTS Source
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          # Matches your exact 5.15.153 build version
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
           repo sync -j$(nproc) --force-sync
 
@@ -44,17 +43,9 @@ jobs:
             sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
           fi
           
-          # 4. Bypass savedefconfig Integrity Error (Critical Fix)
-          sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"//' ${{ env.KERNEL_ROOT }}/common/build.config.gki.aarch64 || true
-          
-          # 5. Disable Werror (Avoid failing on minor driver warnings)
-          sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' ${{ env.KERNEL_ROOT }}/common/arch/arm64/configs/gki_defconfig || true
-
-      - name: Configure Advanced Features
-        working-directory: ${{ env.KERNEL_ROOT }}/common
-        run: |
-          # Add features and Samsung USB configs
-          cat >> arch/arm64/configs/gki_defconfig << 'EOF'
+          # 4. Create Defconfig Fragment (Fixes savedefconfig error)
+          # We write to a new file instead of editing gki_defconfig directly
+          cat > ${{ env.KERNEL_ROOT }}/common/arch/arm64/configs/samsung_usb.fragment << 'EOF'
           CONFIG_USB_DWC3_EXYNOS=y
           CONFIG_USB_F_RNDIS=y
           CONFIG_USB_CONFIGFS_F_TETHER=y
@@ -63,19 +54,23 @@ jobs:
           CONFIG_KSU_SUSFS=y
           CONFIG_WIREGUARD=y
           EOF
+          
+          # 5. Disable Werror and bypass integrity check
+          sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"//' ${{ env.KERNEL_ROOT }}/common/build.config.gki.aarch64 || true
+          sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' ${{ env.KERNEL_ROOT }}/common/arch/arm64/configs/gki_defconfig || true
 
       - name: Build Kernel (Bazel)
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          # Use --config=fast to bypass strict KMI ABI checks
-          tools/bazel build --config=fast //common:kernel_aarch64_dist
+          # Use the --defconfig_fragment flag to merge our custom configs during build
+          tools/bazel build --config=fast //common:kernel_aarch64_dist -- --defconfig_fragment=arch/arm64/configs/samsung_usb.fragment
 
       - name: Package with AnyKernel3
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp ${{ env.KERNEL_ROOT }}/bazel-bin/common/kernel_aarch64/Image AnyKernel3/
           cd AnyKernel3
-          zip -r9 ../M146B-LTS-USB-Fixed.zip * -x .git*
+          zip -r9 ../M146B-Bypass-USB-Fixed.zip * -x .git*
 
       - name: Upload Flashable Kernel
         uses: actions/upload-artifact@v4
