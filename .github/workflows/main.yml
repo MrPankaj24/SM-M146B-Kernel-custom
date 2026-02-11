@@ -31,8 +31,6 @@ jobs:
           rm -rf common/drivers/usb/dwc3
           cp -r samsung_src/drivers/usb/dwc3 common/drivers/usb/
           cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
-          
-          # ---> SURGICAL FIX FOR THE AUDIO HEADER ERROR <---
           cp -r samsung_src/drivers/usb/host/* common/drivers/usb/host/ || true
           
           echo "=> Applying Module Check Bypass (Force Load)..."
@@ -77,6 +75,9 @@ jobs:
           CONFIG_USB_F_RNDIS=y
           CONFIG_USB_CONFIGFS_F_TETHER=y
           CONFIG_USB_DWC3_DUAL_ROLE=y
+          
+          # ---> THIS IS THE FIX FOR THE MISSING AUDIO FUNCTION <---
+          CONFIG_USB_XHCI_EXYNOS=y
           
           # --- KSU & SUSFS ---
           CONFIG_KSU=y
