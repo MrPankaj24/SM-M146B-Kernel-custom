@@ -27,10 +27,13 @@ jobs:
           echo "=> Cloning SM-M146B Source..."
           git clone https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git --depth=1 samsung_src
           
-          echo "=> Porting USB DWC3 & Gadget Drivers..."
+          echo "=> Porting USB DWC3, Gadget & Host Drivers..."
           rm -rf common/drivers/usb/dwc3
           cp -r samsung_src/drivers/usb/dwc3 common/drivers/usb/
           cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
+          
+          # ---> SURGICAL FIX FOR THE AUDIO HEADER ERROR <---
+          cp -r samsung_src/drivers/usb/host/* common/drivers/usb/host/ || true
           
           echo "=> Applying Module Check Bypass (Force Load)..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
