@@ -29,22 +29,21 @@ jobs:
 
       - name: Inject Samsung USB Stack & Apply Bypass Fixes
         run: |
-          # 1. Clone Samsung source for SM-M146B
+          # 1. Clone Samsung source
           git clone https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git --depth=1 samsung_src
           
-          # 2. Port USB DWC3 & Gadget Drivers
+          # 2. Port USB Drivers
           rm -rf ${{ env.KERNEL_ROOT }}/common/drivers/usb/dwc3
           cp -r samsung_src/drivers/usb/dwc3 ${{ env.KERNEL_ROOT }}/common/drivers/usb/
           cp -r samsung_src/drivers/usb/gadget/function/* ${{ env.KERNEL_ROOT }}/common/drivers/usb/gadget/function/
           
-          # 3. Apply Module Check Bypass (Force-load mismatched modules)
+          # 3. Apply Module Check Bypass
           TARGET_FILE="${{ env.KERNEL_ROOT }}/common/kernel/module.c"
           if [ -f "$TARGET_FILE" ]; then
             sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
           fi
           
-          # 4. Create Defconfig Fragment (Fixes savedefconfig error)
-          # We write to a new file instead of editing gki_defconfig directly
+          # 4. Create Defconfig Fragment
           cat > ${{ env.KERNEL_ROOT }}/common/arch/arm64/configs/samsung_usb.fragment << 'EOF'
           CONFIG_USB_DWC3_EXYNOS=y
           CONFIG_USB_F_RNDIS=y
@@ -62,7 +61,7 @@ jobs:
       - name: Build Kernel (Bazel)
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
-          # Use the --defconfig_fragment flag to merge our custom configs during build
+          # Pass the fragment to the build tool properly
           tools/bazel build --config=fast //common:kernel_aarch64_dist -- --defconfig_fragment=arch/arm64/configs/samsung_usb.fragment
 
       - name: Package with AnyKernel3
@@ -70,7 +69,7 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp ${{ env.KERNEL_ROOT }}/bazel-bin/common/kernel_aarch64/Image AnyKernel3/
           cd AnyKernel3
-          zip -r9 ../M146B-Bypass-USB-Fixed.zip * -x .git*
+          zip -r9 ../M146B-LTS-USB-Fixed.zip * -x .git*
 
       - name: Upload Flashable Kernel
         uses: actions/upload-artifact@v4
