@@ -50,10 +50,11 @@ jobs:
           cat temp.h common/drivers/usb/host/xhci-mem.c > temp.c && mv temp.c common/drivers/usb/host/xhci-mem.c
           
           # Fix 4: xhci-hub.c incomplete type 'struct xhci_exynos_audio'
-          # Step A: Unlock the header file by removing guards
+          # Step A: Unlock the header file by removing guards (Already doing this, but repeating to be safe)
           sed -i 's/#ifdef CONFIG_USB_XHCI_EXYNOS/#if 1/g' common/drivers/usb/host/xhci-exynos-audio.h || true
           sed -i 's/#ifdef CONFIG_USB_XHCI_EXYNOS_AUDIO/#if 1/g' common/drivers/usb/host/xhci-exynos-audio.h || true
-          # Step B: Force include the header into xhci-hub.c
+          
+          # Step B: Force include the header into xhci-hub.c (This is the NEW FIX)
           sed -i '1s/^/#include "xhci-exynos-audio.h"\n/' common/drivers/usb/host/xhci-hub.c
           
           echo "=> BRUTE FORCE FIX: Forcing Audio Compilation..."
