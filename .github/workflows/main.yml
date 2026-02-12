@@ -87,7 +87,6 @@ jobs:
           ether_c = 'common/drivers/usb/gadget/function/u_ether.c'
           if os.path.exists(ether_c):
               with open(ether_c, 'r') as f: content = f.read()
-              # We replace the function signature to add __maybe_unused
               new_content = content.replace('static enum hrtimer_restart tx_timeout(struct hrtimer *data)', 'static enum hrtimer_restart __maybe_unused tx_timeout(struct hrtimer *data)')
               if new_content != content:
                   with open(ether_c, 'w') as f: f.write(new_content)
@@ -106,25 +105,8 @@ jobs:
           find common -name "build.config.*" -exec sed -i 's/check_defconfig//g' {} +
           find common -name "build.config.*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/POST_DEFCONFIG_CMDS=""/g' {} +
 
-      - name: Setup KernelSU-Next & SUSFS
-        working-directory: ${{ env.KERNEL_ROOT }}
-        run: |
-          echo "=> Fetching KernelSU-Next..."
-          cd common
-          curl -ls https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash - || true
-          cd ..
-          
-          echo "=> Fetching and Patching SUSFS..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 || true
-          if [ -d "susfs4ksu" ]; then
-            cp -r susfs4ksu/kernel_patches/fs/* common/fs/ || true
-            cp -r susfs4ksu/kernel_patches/include/linux/* common/include/linux/ || true
-            cd common
-            for patch in ../susfs4ksu/kernel_patches/*.patch; do
-              patch -p1 < "$patch" || true
-            done
-            cd ..
-          fi
+          echo "=> DESTROYING ALL WERROR FLAGS..."
+          find common -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
 
       - name: Configure Kernel Features
         working-directory: ${{ env.KERNEL_ROOT }}/common
@@ -142,6 +124,9 @@ jobs:
           CONFIG_SND=y
           CONFIG_SND_USB=y
           CONFIG_SND_USB_AUDIO=y
+          
+          # --- DISABLE BROKEN HID ---
+          CONFIG_USB_CONFIGFS_F_HID=n
           
           # --- KSU & SUSFS ---
           CONFIG_KSU=y
