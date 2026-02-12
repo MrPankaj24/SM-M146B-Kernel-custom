@@ -1,27 +1,27 @@
-name: Samsung M14 Exact GKI (5.15.153)
+name: Samsung M14 Custom Kernel
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GKI 5.15.153 with KSU
+    name: Build GKI 5.15 with Samsung USB
     runs-on: ubuntu-latest
     steps:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev repo zip curl
+          sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev repo zip curl python3
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
           echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel_workspace" >> $GITHUB_ENV
 
-      - name: Sync Specific GKI Tag (5.15.153)
+      - name: Sync GKI Android 13 5.15 LTS Source
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
           repo sync -j$(nproc) --force-sync
 
-      - name: Inject Samsung Source (USB + Host)
+      - name: Inject Samsung Source & Apply Python Fixes
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=> Cloning SM-M146B Source..."
@@ -30,15 +30,63 @@ jobs:
           echo "=> Porting USB Drivers..."
           rm -rf common/drivers/usb/dwc3
           cp -r samsung_src/drivers/usb/dwc3 common/drivers/usb/
-          
-          # ---> THIS IS THE MISSING PIECE <---
-          # We must copy the host headers because dwc3/core.c includes them
+          cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
           cp -r samsung_src/drivers/usb/host/* common/drivers/usb/host/ || true
           
-          echo "=> Applying Module Check Bypass (Force Load)..."
+          echo "=> RUNNING PYTHON SURGEON..."
+          # This python script surgically implants the missing declarations at the top of the C files
+          cat <<EOF > patcher.py
+          import os
+
+          # File 1: core.c - Fix missing alloc function
+          core_c = 'common/drivers/usb/dwc3/core.c'
+          if os.path.exists(core_c):
+              with open(core_c, 'r') as f: lines = f.readlines()
+              # Check if already patched
+              if 'extern int xhci_exynos_audio_alloc' not in lines[0]:
+                  lines.insert(0, 'struct device;\nextern int xhci_exynos_audio_alloc(struct device *dev);\n')
+                  with open(core_c, 'w') as f: f.writelines(lines)
+                  print("Patched core.c")
+
+          # File 2: xhci.c - Fix missing sync function
+          xhci_c = 'common/drivers/usb/host/xhci.c'
+          if os.path.exists(xhci_c):
+              with open(xhci_c, 'r') as f: lines = f.readlines()
+              if 'extern int xhci_exynos_sync_dev_ctx' not in lines[0]:
+                  lines.insert(0, 'struct xhci_hcd;\nextern int xhci_exynos_sync_dev_ctx(struct xhci_hcd *xhci, int slot_id);\n')
+                  with open(xhci_c, 'w') as f: f.writelines(lines)
+                  print("Patched xhci.c")
+
+          # File 3: xhci-hub.c - Fix struct incomplete type
+          hub_c = 'common/drivers/usb/host/xhci-hub.c'
+          struct_def = 'struct xhci_exynos_audio { struct device *dev; struct phy *phy; void *regs; };\nextern struct xhci_exynos_audio *g_xhci_exynos_audio;\n'
+          if os.path.exists(hub_c):
+              with open(hub_c, 'r') as f: lines = f.readlines()
+              if 'struct xhci_exynos_audio {' not in lines[0]:
+                  lines.insert(0, struct_def)
+                  with open(hub_c, 'w') as f: f.writelines(lines)
+                  print("Patched xhci-hub.c")
+          
+          # File 4: xhci-mem.c - Fix missing macro
+          mem_c = 'common/drivers/usb/host/xhci-mem.c'
+          macro_def = '#ifndef XHCI_USE_URAM_FOR_EXYNOS_AUDIO\n#define XHCI_USE_URAM_FOR_EXYNOS_AUDIO 0\n#endif\n'
+          if os.path.exists(mem_c):
+              with open(mem_c, 'r') as f: lines = f.readlines()
+              if 'XHCI_USE_URAM_FOR_EXYNOS_AUDIO' not in lines[0]:
+                  lines.insert(0, macro_def)
+                  with open(mem_c, 'w') as f: f.writelines(lines)
+                  print("Patched xhci-mem.c")
+          EOF
+          
+          python3 patcher.py
+          
+          echo "=> Forcing Audio Compilation..."
+          echo "obj-y += xhci-exynos-audio.o" >> common/drivers/usb/host/Makefile
+          
+          echo "=> Applying Module Check Bypass..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
 
-          echo "=> Obliterating strict defconfig checks..."
+          echo "=> Destroying Defconfig Checkers..."
           find common -name "build.config.*" -exec sed -i 's/check_defconfig//g' {} +
           find common -name "build.config.*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/POST_DEFCONFIG_CMDS=""/g' {} +
 
@@ -68,11 +116,16 @@ jobs:
           echo "=> Appending custom configs to gki_defconfig..."
           cat >> arch/arm64/configs/gki_defconfig << 'EOF'
           
-          # --- SAMSUNG USB ---
+          # --- EXYNOS & USB ---
+          CONFIG_ARCH_EXYNOS=y
           CONFIG_USB_DWC3_EXYNOS=y
           CONFIG_USB_F_RNDIS=y
           CONFIG_USB_CONFIGFS_F_TETHER=y
           CONFIG_USB_DWC3_DUAL_ROLE=y
+          CONFIG_USB_XHCI_EXYNOS=y
+          CONFIG_SND=y
+          CONFIG_SND_USB=y
+          CONFIG_SND_USB_AUDIO=y
           
           # --- KSU & SUSFS ---
           CONFIG_KSU=y
@@ -94,10 +147,10 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp ${{ env.KERNEL_ROOT }}/bazel-bin/common/kernel_aarch64/Image AnyKernel3/ || true
           cd AnyKernel3
-          zip -r9 ../M146B-Kernel-5.15.153.zip * -x .git*
+          zip -r9 ../M146B-Kernel-Complete.zip * -x .git*
 
       - name: Upload Flashable Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: M146B-Kernel-5.15.153
-          path: M146B-Kernel-5.15.153.zip
+          name: M146B-Kernel-Complete
+          path: M146B-Kernel-Complete.zip
