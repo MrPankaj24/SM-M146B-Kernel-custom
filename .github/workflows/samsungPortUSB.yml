@@ -1,11 +1,11 @@
-name: Samsung M14 Custom Kernel
+name: Samsung M14 Custom Kernel (Tethering Focused)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build GKI 5.15 with Samsung USB
+    name: Build GKI 5.15 with USB Tethering
     runs-on: ubuntu-latest
     steps:
       - name: Setup Build Environment
@@ -18,25 +18,28 @@ jobs:
       - name: Sync GKI Android 13 5.15 LTS Source
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
+          # Syncing the LTS branch which covers 5.15.153+
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
           repo sync -j$(nproc) --force-sync
 
-      - name: Inject Samsung Source & Destroy Checkers
+      - name: Inject Samsung Source (USB Only)
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=> Cloning SM-M146B Source..."
           git clone https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git --depth=1 samsung_src
           
-          echo "=> Porting USB DWC3 & Gadget Drivers..."
+          echo "=> Porting ONLY Essential USB Drivers for Tethering..."
+          # Removing Google's generic DWC3 driver and replacing it with Samsung's hardware-specific version
           rm -rf common/drivers/usb/dwc3
           cp -r samsung_src/drivers/usb/dwc3 common/drivers/usb/
-          cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
+          
+          # We purposefully DO NOT copy the 'host' folder to avoid the Audio errors. 
+          # Stock GKI host drivers will handle standard USB data.
           
           echo "=> Applying Module Check Bypass (Force Load)..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
 
           echo "=> Obliterating strict defconfig checks..."
-          # This sweeps through all GKI config files and deletes the check_defconfig command
           find common -name "build.config.*" -exec sed -i 's/check_defconfig//g' {} +
           find common -name "build.config.*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/POST_DEFCONFIG_CMDS=""/g' {} +
 
@@ -45,7 +48,6 @@ jobs:
         run: |
           echo "=> Fetching KernelSU-Next..."
           cd common
-          # Falling back to default script behavior to avoid pathspec errors
           curl -ls https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash - || true
           cd ..
           
@@ -55,7 +57,6 @@ jobs:
             cp -r susfs4ksu/kernel_patches/fs/* common/fs/ || true
             cp -r susfs4ksu/kernel_patches/include/linux/* common/include/linux/ || true
             cd common
-            # Safely apply any patch files found in the directory
             for patch in ../susfs4ksu/kernel_patches/*.patch; do
               patch -p1 < "$patch" || true
             done
@@ -65,11 +66,10 @@ jobs:
       - name: Configure Kernel Features
         working-directory: ${{ env.KERNEL_ROOT }}/common
         run: |
-          echo "=> Appending custom configs to gki_defconfig..."
+          echo "=> Appending Tethering & KSU configs..."
           cat >> arch/arm64/configs/gki_defconfig << 'EOF'
           
-          # --- EXYNOS & USB ---
-          CONFIG_ARCH_EXYNOS=y
+          # --- SAMSUNG USB TETHERING SUPPORT ---
           CONFIG_USB_DWC3_EXYNOS=y
           CONFIG_USB_F_RNDIS=y
           CONFIG_USB_CONFIGFS_F_TETHER=y
@@ -88,7 +88,6 @@ jobs:
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |          
           echo "=> Starting Final Bazel Build..."
-          # With the checkers destroyed, this will run straight through using your custom configs
           tools/bazel build --config=fast //common:kernel_aarch64_dist
 
       - name: Package AnyKernel3
@@ -96,10 +95,10 @@ jobs:
           git clone https://github.com/osm0sis/AnyKernel3.git
           cp ${{ env.KERNEL_ROOT }}/bazel-bin/common/kernel_aarch64/Image AnyKernel3/ || true
           cd AnyKernel3
-          zip -r9 ../M146B-Kernel-Complete.zip * -x .git*
+          zip -r9 ../M146B-Kernel-Tethering.zip * -x .git*
 
       - name: Upload Flashable Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: M146B-Kernel-Complete
-          path: M146B-Kernel-Complete.zip
+          name: M146B-Kernel-Tethering
+          path: M146B-Kernel-Tethering.zip
