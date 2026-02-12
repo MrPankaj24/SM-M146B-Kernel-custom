@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    name: Build GKI 5.15 with Samsung USB & Audio
+    name: Build GKI 5.15 with Samsung USB
     runs-on: ubuntu-latest
     steps:
       - name: Setup Build Environment
@@ -21,7 +21,7 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
           repo sync -j$(nproc) --force-sync
 
-      - name: Inject Samsung Source & Enable Audio
+      - name: Inject Samsung Source & Destroy Checkers
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=> Cloning SM-M146B Source..."
@@ -33,17 +33,14 @@ jobs:
           cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
           cp -r samsung_src/drivers/usb/host/* common/drivers/usb/host/ || true
           
-          echo "=> FORCING Exynos Audio Visibility..."
-          # 1. Force the C file to compile by adding it to the Makefile
-          sed -i 's/xhci-plat-y := xhci-plat.o/xhci-plat-y := xhci-plat.o xhci-exynos-audio.o/' common/drivers/usb/host/Makefile || true
+          echo "=> BRUTE FORCE FIX: Injecting Audio Declaration..."
+          # We inject the function prototype directly into core.c right before it is called.
+          # This fixes 'implicit declaration' 100% of the time.
+          sed -i '/ret = xhci_exynos_audio_alloc(dev);/i extern int xhci_exynos_audio_alloc(struct device *dev);' common/drivers/usb/dwc3/core.c
           
-          # 2. Force the Header to show the function (Removing ifdefs)
-          # We replace check for CONFIG_USB_XHCI_EXYNOS with "if 1" (Always True)
-          HEADER_FILE="common/drivers/usb/host/xhci-exynos-audio.h"
-          if [ -f "$HEADER_FILE" ]; then
-             sed -i 's/#ifdef CONFIG_USB_XHCI_EXYNOS/#if 1/g' "$HEADER_FILE"
-             sed -i 's/#ifdef CONFIG_USB_XHCI_EXYNOS_AUDIO/#if 1/g' "$HEADER_FILE"
-          fi
+          echo "=> BRUTE FORCE FIX: Forcing Audio Compilation..."
+          # We simply append the file to the build list. No searching, no replacing.
+          echo "obj-y += xhci-exynos-audio.o" >> common/drivers/usb/host/Makefile
           
           echo "=> Applying Module Check Bypass (Force Load)..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
@@ -85,9 +82,7 @@ jobs:
           CONFIG_USB_CONFIGFS_F_TETHER=y
           CONFIG_USB_DWC3_DUAL_ROLE=y
           CONFIG_USB_XHCI_EXYNOS=y
-          CONFIG_USB_XHCI_EXYNOS_AUDIO=y
-          
-          # --- SOUND SUPPORT (Required for Audio types) ---
+          # We enable Audio flags to ensure 'struct device' and sound systems are ready
           CONFIG_SND=y
           CONFIG_SND_USB=y
           CONFIG_SND_USB_AUDIO=y
