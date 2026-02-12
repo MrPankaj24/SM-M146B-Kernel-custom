@@ -88,12 +88,9 @@ jobs:
           echo "=> Applying Module Check Bypass..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
 
-          echo "=> Destroying Defconfig Checkers & WERROR..."
+          echo "=> Destroying Defconfig Checkers..."
           find common -name "build.config.*" -exec sed -i 's/check_defconfig//g' {} +
           find common -name "build.config.*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/POST_DEFCONFIG_CMDS=""/g' {} +
-          
-          # IMPORTANT: Strip -Werror from all Makefiles to prevent 'unused function' crashes
-          find common -name "Makefile*" -exec sed -i 's/-Werror//g' {} +
 
       - name: Setup KernelSU-Next & SUSFS
         working-directory: ${{ env.KERNEL_ROOT }}
@@ -138,7 +135,8 @@ jobs:
           CONFIG_WIREGUARD=y
           EOF
           
-          echo "=> Disabling WERROR..."
+          echo "=> Disabling WERROR safely..."
+          # This specifically targets the main Kconfig, preventing global WERROR
           sed -i 's/CONFIG_WERROR=y/CONFIG_WERROR=n/' arch/arm64/configs/gki_defconfig || true
 
       - name: Compile Kernel (Bazel)
