@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    name: Build GKI 5.15 with Samsung USB
+    name: Build GKI 5.15 with Samsung USB & Audio
     runs-on: ubuntu-latest
     steps:
       - name: Setup Build Environment
@@ -21,7 +21,7 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android13-5.15-lts --depth=1
           repo sync -j$(nproc) --force-sync
 
-      - name: Inject Samsung Source & Destroy Checkers
+      - name: Inject Samsung Source & Enable Audio
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           echo "=> Cloning SM-M146B Source..."
@@ -33,9 +33,17 @@ jobs:
           cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
           cp -r samsung_src/drivers/usb/host/* common/drivers/usb/host/ || true
           
-          echo "=> FORCING Exynos Audio Compilation..."
-          # This edits the host Makefile to guarantee the audio file is compiled with the rest of the xhci drivers
+          echo "=> FORCING Exynos Audio Visibility..."
+          # 1. Force the C file to compile by adding it to the Makefile
           sed -i 's/xhci-plat-y := xhci-plat.o/xhci-plat-y := xhci-plat.o xhci-exynos-audio.o/' common/drivers/usb/host/Makefile || true
+          
+          # 2. Force the Header to show the function (Removing ifdefs)
+          # We replace check for CONFIG_USB_XHCI_EXYNOS with "if 1" (Always True)
+          HEADER_FILE="common/drivers/usb/host/xhci-exynos-audio.h"
+          if [ -f "$HEADER_FILE" ]; then
+             sed -i 's/#ifdef CONFIG_USB_XHCI_EXYNOS/#if 1/g' "$HEADER_FILE"
+             sed -i 's/#ifdef CONFIG_USB_XHCI_EXYNOS_AUDIO/#if 1/g' "$HEADER_FILE"
+          fi
           
           echo "=> Applying Module Check Bypass (Force Load)..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
@@ -77,6 +85,12 @@ jobs:
           CONFIG_USB_CONFIGFS_F_TETHER=y
           CONFIG_USB_DWC3_DUAL_ROLE=y
           CONFIG_USB_XHCI_EXYNOS=y
+          CONFIG_USB_XHCI_EXYNOS_AUDIO=y
+          
+          # --- SOUND SUPPORT (Required for Audio types) ---
+          CONFIG_SND=y
+          CONFIG_SND_USB=y
+          CONFIG_SND_USB_AUDIO=y
           
           # --- KSU & SUSFS ---
           CONFIG_KSU=y
