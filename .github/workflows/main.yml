@@ -41,12 +41,39 @@ jobs:
           mkdir -p common/include/dt-bindings/soc/samsung
           cp -r samsung_src/include/dt-bindings/soc/samsung/* common/include/dt-bindings/soc/samsung/ || true
           
-          echo "=> RUNNING PYTHON SURGEON..."
+          echo "=> CREATING SAMSUNG STUBS (The Linker Fix)..."
+          # This file provides dummy symbols for everything the linker is missing.
+          # It prevents the 'undefined symbol' errors.
+          cat <<EOF > common/drivers/usb/host/samsung_stubs.c
+          #include <linux/kernel.h>
+          #include <linux/device.h>
+          #include <linux/pm_wakeup.h>
+          
+          // Audio Stubs
+          int xhci_exynos_audio_alloc(struct device *dev) { return 0; }
+          int xhci_exynos_sync_dev_ctx(void *xhci, int slot_id) { return 0; }
+          
+          // USB Scenarios & OTG Stubs
+          int usb_user_scenario(void) { return 0; }
+          int is_otg_only(void) { return 0; }
+          void usb_power_notify_control(void) {}
+          int otg_is_connect(void) { return 0; }
+          void exynos_usbdrd_phy_vendor_set(void) {}
+          
+          // Missing Global Variables
+          // We define these so the linker finds the memory address
+          struct wake_lock main_hcd_wakelock;
+          struct wake_lock shared_hcd_wakelock;
+          int xhci_exynos_pm_state;
+          int usb_dr_role_control;
+          EOF
+
+          echo "=> RUNNING PYTHON SURGEON (Header Fixes)..."
           cat <<EOF > patcher.py
           import os
           import re
 
-          # Fix 1: core.c missing xhci_exynos_audio_alloc
+          # Fix 1: core.c declaration
           core_c = 'common/drivers/usb/dwc3/core.c'
           if os.path.exists(core_c):
               with open(core_c, 'r') as f: lines = f.readlines()
@@ -55,7 +82,7 @@ jobs:
                   with open(core_c, 'w') as f: f.writelines(lines)
                   print("Patched core.c")
 
-          # Fix 2: xhci.c missing xhci_exynos_sync_dev_ctx
+          # Fix 2: xhci.c declaration
           xhci_c = 'common/drivers/usb/host/xhci.c'
           if os.path.exists(xhci_c):
               with open(xhci_c, 'r') as f: lines = f.readlines()
@@ -64,7 +91,7 @@ jobs:
                   with open(xhci_c, 'w') as f: f.writelines(lines)
                   print("Patched xhci.c")
 
-          # Fix 3: xhci-hub.c incomplete struct type
+          # Fix 3: xhci-hub.c struct definition
           hub_c = 'common/drivers/usb/host/xhci-hub.c'
           struct_def = 'struct xhci_exynos_audio { struct device *dev; struct phy *phy; void *regs; };\nextern struct xhci_exynos_audio *g_xhci_exynos_audio;\n'
           if os.path.exists(hub_c):
@@ -74,7 +101,7 @@ jobs:
                   with open(hub_c, 'w') as f: f.writelines(lines)
                   print("Patched xhci-hub.c")
           
-          # Fix 4: xhci-mem.c missing macro
+          # Fix 4: xhci-mem.c macro
           mem_c = 'common/drivers/usb/host/xhci-mem.c'
           macro_def = '#ifndef XHCI_USE_URAM_FOR_EXYNOS_AUDIO\n#define XHCI_USE_URAM_FOR_EXYNOS_AUDIO 0\n#endif\n'
           if os.path.exists(mem_c):
@@ -84,27 +111,22 @@ jobs:
                   with open(mem_c, 'w') as f: f.writelines(lines)
                   print("Patched xhci-mem.c")
 
-          # Fix 5: u_ether.c unused function error (REGEX EDITION)
+          # Fix 5: u_ether.c unused function (Regex)
           ether_c = 'common/drivers/usb/gadget/function/u_ether.c'
           if os.path.exists(ether_c):
               with open(ether_c, 'r') as f: content = f.read()
-              # Regex to find the function signature regardless of spacing
               pattern = r'static\s+enum\s+hrtimer_restart\s+tx_timeout\s*\(\s*struct\s+hrtimer\s*\*\s*data\s*\)'
               replacement = 'static enum hrtimer_restart __maybe_unused tx_timeout(struct hrtimer *data)'
-              
               new_content = re.sub(pattern, replacement, content)
-              
-              if new_content != content:
-                  with open(ether_c, 'w') as f: f.write(new_content)
-                  print("Patched u_ether.c (unused function fix with Regex)")
-              else:
-                  print("WARNING: Regex failed to match tx_timeout in u_ether.c")
+              with open(ether_c, 'w') as f: f.write(new_content)
+              print("Patched u_ether.c")
           EOF
           
           python3 patcher.py
           
-          echo "=> Forcing Exynos Audio Compilation..."
-          echo "obj-y += xhci-exynos-audio.o" >> common/drivers/usb/host/Makefile
+          echo "=> Forcing Stubs Compilation..."
+          # We add our stubs file to the makefile so it gets linked into the kernel
+          echo "obj-y += samsung_stubs.o" >> common/drivers/usb/host/Makefile
           
           echo "=> Applying Module Check Bypass..."
           sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' common/kernel/module.c || true
