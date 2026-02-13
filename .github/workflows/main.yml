@@ -1,4 +1,4 @@
-name: Samsung M14 Custom Kernel (Final Fix)
+name: Samsung M14 Custom Kernel
 
 on:
   workflow_dispatch:
@@ -33,39 +33,39 @@ jobs:
           cp -r samsung_src/drivers/usb/gadget/function/* common/drivers/usb/gadget/function/
           cp -r samsung_src/drivers/usb/host/* common/drivers/usb/host/ || true
           
-          echo "=> Porting SoC Headers..."
+          echo "=> Porting Essential SoC Headers..."
           mkdir -p common/include/soc/samsung
           cp -r samsung_src/include/soc/samsung/* common/include/soc/samsung/ || true
           mkdir -p common/include/dt-bindings/soc/samsung
           cp -r samsung_src/include/dt-bindings/soc/samsung/* common/include/dt-bindings/soc/samsung/ || true
           
-          echo "=> CREATING SAMSUNG STUBS (Fixed)..."
-          # We define a dummy wake_lock struct so the compiler doesn't crash.
+          echo "=> CREATING SAMSUNG STUBS (For Global Linker Symbols)..."
           cat <<EOF > common/drivers/usb/host/samsung_stubs.c
           #include <linux/kernel.h>
           #include <linux/device.h>
           
-          // Dummy struct definition to satisfy the compiler
-          struct wake_lock {
-              int dummy;
-          };
+          // Dummy struct definitions
+          struct wake_lock { int dummy; };
+          struct xhci_exynos_audio { int dummy; };
           
-          // Audio Stubs
+          // Function Stubs
           int xhci_exynos_audio_alloc(struct device *dev) { return 0; }
           int xhci_exynos_sync_dev_ctx(void *xhci, int slot_id) { return 0; }
-          
-          // USB Scenarios & OTG Stubs
           int usb_user_scenario(void) { return 0; }
           int is_otg_only(void) { return 0; }
           void usb_power_notify_control(void) {}
           int otg_is_connect(void) { return 0; }
           void exynos_usbdrd_phy_vendor_set(void) {}
           
-          // Missing Global Variables
+          // Global Variable Stubs (Exported)
           struct wake_lock main_hcd_wakelock;
           struct wake_lock shared_hcd_wakelock;
           int xhci_exynos_pm_state = 0;
           int usb_dr_role_control = 0;
+          
+          // Export symbols to ensure visibility
+          EXPORT_SYMBOL(xhci_exynos_audio_alloc);
+          EXPORT_SYMBOL(xhci_exynos_sync_dev_ctx);
           EOF
 
           echo "=> RUNNING PYTHON SURGEON..."
@@ -91,15 +91,18 @@ jobs:
                   with open(xhci_c, 'w') as f: f.writelines(lines)
                   print("Patched xhci.c")
 
-          # Fix 3: xhci-hub.c struct definition
+          # Fix 3: xhci-hub.c struct definition AND Global Variable Injection
           hub_c = 'common/drivers/usb/host/xhci-hub.c'
-          struct_def = 'struct xhci_exynos_audio { struct device *dev; struct phy *phy; void *regs; };\nextern struct xhci_exynos_audio *g_xhci_exynos_audio;\n'
+          # We inject the struct AND the variable definition right here to guarantee visibility
+          struct_def = 'struct xhci_exynos_audio { struct device *dev; struct phy *phy; void *regs; };\nstruct xhci_exynos_audio dummy_audio;\nstruct xhci_exynos_audio *g_xhci_exynos_audio = &dummy_audio;\n'
           if os.path.exists(hub_c):
               with open(hub_c, 'r') as f: lines = f.readlines()
               if 'struct xhci_exynos_audio {' not in lines[0]:
+                  # Remove existing extern declaration to avoid conflicts
+                  lines = [line for line in lines if 'extern struct xhci_exynos_audio *g_xhci_exynos_audio' not in line]
                   lines.insert(0, struct_def)
                   with open(hub_c, 'w') as f: f.writelines(lines)
-                  print("Patched xhci-hub.c")
+                  print("Patched xhci-hub.c with embedded global variable")
           
           # Fix 4: xhci-mem.c macro
           mem_c = 'common/drivers/usb/host/xhci-mem.c'
@@ -133,8 +136,6 @@ jobs:
           echo "=> Destroying Defconfig Checkers..."
           find common -name "build.config.*" -exec sed -i 's/check_defconfig//g' {} +
           find common -name "build.config.*" -exec sed -i 's/POST_DEFCONFIG_CMDS="check_defconfig"/POST_DEFCONFIG_CMDS=""/g' {} +
-          
-          # NOTE: WERROR is handled in Kconfig below, safer than deleting makefiles.
 
       - name: Configure Kernel Features
         working-directory: ${{ env.KERNEL_ROOT }}/common
