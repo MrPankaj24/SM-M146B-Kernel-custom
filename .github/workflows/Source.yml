@@ -1,140 +1,123 @@
-name: Samsung M14 Native Build (FMP Fix)
+name: Build Samsung M14 5G Kernel (Fixed)
+
+permissions:
+  contents: write
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Native Samsung Kernel
     runs-on: ubuntu-latest
+
     steps:
-      - name: Setup Build Environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev repo zip curl libncurses5-dev gcc-aarch64-linux-gnu lz4 dwarves cpio
-          
-          mkdir -p $GITHUB_WORKSPACE/kernel_workspace
-          echo "KERNEL_ROOT=$GITHUB_WORKSPACE/kernel_workspace" >> $GITHUB_ENV
+    - name: Checkout Workflow
+      uses: actions/checkout@v3
 
-      - name: Clone Samsung Source Code
-        working-directory: ${{ env.KERNEL_ROOT }}
-        run: |
-          echo "=> Cloning SM-M146B Source..."
-          git clone https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git --depth=1 android_kernel_samsung_m14
-          
-      - name: Download Toolchain (Clang 14)
-        working-directory: ${{ env.KERNEL_ROOT }}
-        run: |
-          echo "=> Cloning Google Clang 14..."
-          mkdir -p clang-14
-          git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android13-release --depth=1 clang-repo
-          mv clang-repo/clang-r450784d/* clang-14/
-          rm -rf clang-repo
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git build-essential bc bison flex libssl-dev libncurses5-dev libncursesw5-dev \
+        libelf-dev cmake cpio unzip rsync device-tree-compiler python3
 
-      - name: Setup KernelSU-Next
-        working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
-        run: |
-          echo "=> Patching KernelSU-Next..."
-          curl -ls https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh | bash -
+    - name: Clone Kernel Source
+      run: |
+        # Cloning the specific Samsung M14 source
+        git clone https://github.com/devhunter1/android_kernel_samsung_s5e8535.git -b android13-5.15-lts kernel_workspace
+      
+    - name: Clone Toolchains
+      run: |
+        # Google's Clang 17 (Official Android Toolchain)
+        mkdir -p clang
+        wget https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r487747c.tar.gz
+        tar -C clang/ -zxvf clang-r487747c.tar.gz
+        
+        # GCC 4.9 (Legacy, often needed for Samsung kernels)
+        git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9.git --depth=1 gcc64
+        git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9.git --depth=1 gcc32
 
-      - name: Setup SUSFS (Safe Mode)
-        working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
-        run: |
-          echo "=> Fetching SUSFS..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
-          
-          echo "=> Copying SUSFS files..."
-          cp -r susfs4ksu/kernel_patches/fs/* fs/
-          cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
-          
-          echo "=> Applying SUSFS Patches..."
-          for patch in susfs4ksu/kernel_patches/*.patch; do
-            echo "Applying $patch..."
-            patch -p1 --forward < "$patch" || echo "Warning: $patch failed to apply, skipping..."
-          done
+    - name: Setup KernelSU-Next (Root)
+      working-directory: kernel_workspace
+      run: |
+        # Cloning KernelSU-Next
+        curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next-susfs
+        
+        # NOTE: SUSFS patches are DISABLED here to prevent build failure.
+        # We are only enabling the core KernelSU functionality.
 
-      - name: Fix Samsung Source Errors
-        working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
-        run: |
-          echo "=> Fixing missing Camera Makefile..."
-          mkdir -p drivers/media/platform/exynos/camera/vendor/default
-          echo "obj-n := dummy.o" > drivers/media/platform/exynos/camera/vendor/default/Makefile
-          
-          echo "=> Fixing GPU Driver Typo..."
-          find drivers -name "mali_kbase_mem_linux.c" -exec sed -i 's/TIMED_OUT/ETIMEDOUT/g' {} +
-          
-          echo "=> REMOVING BROKEN KNOX/UFS DRIVERS..."
-          # 1. Disable SRPMB (caused the previous error)
-          sed -i 's/obj-$(CONFIG_SCSI_UFS_EXYNOS_SRPMB)/# obj-$(CONFIG_SCSI_UFS_EXYNOS_SRPMB)/g' drivers/scsi/ufs/Makefile
-          # 2. Disable FMP (caused the CURRENT error) - Deleting the line that compiles it
-          sed -i '/ufs-exynos-fmp.o/d' drivers/scsi/ufs/Makefile
+    - name: Configure Kernel (LXC + Docker)
+      working-directory: kernel_workspace
+      run: |
+        # Set environment variables for the compiler
+        export PATH=$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        export CC=clang
+        export CLANG_TRIPLE=aarch64-linux-gnu-
 
-      - name: Configure Kernel
-        working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
-        run: |
-          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-14/bin:$PATH
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CC=clang
-          
-          echo "=> Locating Defconfig..."
-          DEFCONFIG_FILE=$(find arch/arm64/configs -name "*m14*defconfig" | head -n 1)
-          if [ -z "$DEFCONFIG_FILE" ]; then
-            DEFCONFIG_FILE=$(find arch/arm64/configs -name "exynos1330_defconfig" | head -n 1)
-          fi
-          
-          echo "Using defconfig: $(basename $DEFCONFIG_FILE)"
-          make $(basename $DEFCONFIG_FILE)
-          
-          echo "=> Enabling Features..."
-          ./scripts/config --file .config --enable CONFIG_KSU
-          ./scripts/config --file .config --enable CONFIG_KSU_SUSFS
-          ./scripts/config --file .config --enable CONFIG_USB_CONFIGFS_F_TETHER
-          ./scripts/config --file .config --enable CONFIG_USB_F_NCM
-          ./scripts/config --file .config --enable CONFIG_USB_F_RNDIS
-          
-          echo "=> Disabling Bloat & Errors..."
-          ./scripts/config --file .config --disable CONFIG_MODULE_SIG
-          ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF
-          ./scripts/config --file .config --disable CONFIG_WERROR
-          # Explicitly disable the broken UFS configs
-          ./scripts/config --file .config --disable CONFIG_SCSI_UFS_EXYNOS_SRPMB
-          ./scripts/config --file .config --disable CONFIG_SCSI_UFS_EXYNOS_FMP
-          
-          # Disable Logging to save RAM
-          ./scripts/config --file .config --disable CONFIG_SAMSUNG_SCSC_LOG_COLLECTION
-          
-          make olddefconfig
+        # Clean build
+        make clean && make mrproper
 
-      - name: Compile Kernel
-        working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
-        run: |
-          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-14/bin:/usr/bin:$PATH
-          export ARCH=arm64
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CC=clang
-          
-          echo "=> Building Image (Safe Mode - 2 Cores)..."
-          # -j2 is safe. It's faster than -j1 but won't crash the server.
-          make -j2 LLVM=1 KCFLAGS="-w" Image
+        # Load the default configuration for Samsung M14 (m14x)
+        make m14x_defconfig
 
-      - name: Package AnyKernel3
-        run: |
-          git clone https://github.com/osm0sis/AnyKernel3.git
-          if [ -f ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image ]; then
-             cp ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image AnyKernel3/
-          else
-             echo "Image file not found! Checking directory..."
-             ls -R ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/
-             exit 1
-          fi
-          cd AnyKernel3
-          zip -r9 ../M146B-Native-Kernel.zip * -x .git*
+        # Enable KernelSU
+        ./scripts/config --file .config --enable CONFIG_KSU
+        
+        # Enable LXC and Docker Support (Containers)
+        ./scripts/config --file .config --enable CONFIG_NAMESPACES
+        ./scripts/config --file .config --enable CONFIG_NET_NS
+        ./scripts/config --file .config --enable CONFIG_PID_NS
+        ./scripts/config --file .config --enable CONFIG_IPC_NS
+        ./scripts/config --file .config --enable CONFIG_UTS_NS
+        ./scripts/config --file .config --enable CONFIG_CGROUPS
+        ./scripts/config --file .config --enable CONFIG_CGROUP_CPUACCT
+        ./scripts/config --file .config --enable CONFIG_CGROUP_DEVICE
+        ./scripts/config --file .config --enable CONFIG_CGROUP_FREEZER
+        ./scripts/config --file .config --enable CONFIG_CGROUP_SCHED
+        ./scripts/config --file .config --enable CONFIG_CPUSETS
+        ./scripts/config --file .config --enable CONFIG_MEMCG
+        ./scripts/config --file .config --enable CONFIG_KEYS
+        ./scripts/config --file .config --enable CONFIG_VETH
+        ./scripts/config --file .config --enable CONFIG_BRIDGE
+        ./scripts/config --file .config --enable CONFIG_BRIDGE_NETFILTER
+        ./scripts/config --file .config --enable CONFIG_IP_NF_FILTER
+        ./scripts/config --file .config --enable CONFIG_IP_NF_TARGET_MASQUERADE
+        ./scripts/config --file .config --enable CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+        ./scripts/config --file .config --enable CONFIG_NETFILTER_XT_MATCH_CONNTRACK
+        ./scripts/config --file .config --enable CONFIG_NETFILTER_XT_MATCH_IPVS
+        ./scripts/config --file .config --enable CONFIG_IP_VS
+        ./scripts/config --file .config --enable CONFIG_IP_VS_PROTO_TCP
+        ./scripts/config --file .config --enable CONFIG_IP_VS_PROTO_UDP
+        ./scripts/config --file .config --enable CONFIG_IP_VS_RR
+        ./scripts/config --file .config --enable CONFIG_IP_VS_NFCT
+        ./scripts/config --file .config --enable CONFIG_POSIX_MQUEUE
+        
+        # Update config
+        make olddefconfig
 
-      - name: Upload Flashable Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: M146B-Native-Kernel
-          path: M146B-Native-Kernel.zip
+    - name: Build Kernel
+      working-directory: kernel_workspace
+      run: |
+        export PATH=$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc64/bin:$GITHUB_WORKSPACE/gcc32/bin:$PATH
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+        export CC=clang
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+
+        # Build the kernel image (Image.gz and dtb)
+        make -j$(nproc) Image.gz dtbs
+
+    - name: Prepare Artifacts
+      run: |
+        mkdir -p release
+        cp kernel_workspace/arch/arm64/boot/Image.gz release/
+        find kernel_workspace/arch/arm64/boot/dts/samsung -name "*.dtb" -exec cp {} release/ \;
+        
+    - name: Upload Build
+      uses: actions/upload-artifact@v3
+      with:
+        name: Samsung_M14_Kernel_KSU_Docker
+        path: release/
