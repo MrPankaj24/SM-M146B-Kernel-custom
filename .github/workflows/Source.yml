@@ -1,4 +1,4 @@
-name: Samsung M14 Native Build (Audio Fixed)
+name: Samsung M14 Native Build (No Knox / UFS Fix)
 
 on:
   workflow_dispatch:
@@ -11,6 +11,7 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
+          # Install all dependencies including GCC, LZ4, CPIO (Required for Samsung)
           sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev repo zip curl libncurses5-dev gcc-aarch64-linux-gnu lz4 dwarves cpio
           
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
@@ -62,11 +63,10 @@ jobs:
           
           echo "=> Fixing GPU Driver Typo..."
           find drivers -name "mali_kbase_mem_linux.c" -exec sed -i 's/TIMED_OUT/ETIMEDOUT/g' {} +
-
-          echo "=> Forcing Samsung Audio Driver Compilation..."
-          # This fixes the 'undefined symbol: g_xhci_exynos_audio' error
-          # We force the makefile to include the audio driver file
-          echo "obj-y += xhci-exynos-audio.o" >> drivers/usb/host/Makefile
+          
+          echo "=> REMOVING BROKEN KNOX/UFS DRIVER..."
+          # This command modifies the Makefile to IGNORE the broken file
+          sed -i 's/obj-$(CONFIG_SCSI_UFS_EXYNOS_SRPMB)/# obj-$(CONFIG_SCSI_UFS_EXYNOS_SRPMB)/g' drivers/scsi/ufs/Makefile
 
       - name: Configure Kernel
         working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
@@ -82,6 +82,7 @@ jobs:
           if [ -z "$DEFCONFIG_FILE" ]; then
             DEFCONFIG_FILE=$(find arch/arm64/configs -name "exynos1330_defconfig" | head -n 1)
           fi
+          
           echo "Using defconfig: $(basename $DEFCONFIG_FILE)"
           make $(basename $DEFCONFIG_FILE)
           
@@ -92,13 +93,11 @@ jobs:
           ./scripts/config --file .config --enable CONFIG_USB_F_NCM
           ./scripts/config --file .config --enable CONFIG_USB_F_RNDIS
           
-          echo "=> Enabling Samsung Audio..."
-          ./scripts/config --file .config --enable CONFIG_USB_XHCI_EXYNOS_AUDIO
-          
-          echo "=> Disabling Errors..."
+          echo "=> Disabling Broken Features (Knox/Security/Signing)..."
           ./scripts/config --file .config --disable CONFIG_MODULE_SIG
           ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF
           ./scripts/config --file .config --disable CONFIG_WERROR
+          ./scripts/config --file .config --disable CONFIG_SCSI_UFS_EXYNOS_SRPMB
           
           make olddefconfig
 
@@ -112,12 +111,20 @@ jobs:
           export CC=clang
           
           echo "=> Building Image..."
+          # KCFLAGS="-w" disables all compiler warnings to prevent random stops
           make -j$(nproc) LLVM=1 KCFLAGS="-w" Image
 
       - name: Package AnyKernel3
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
-          cp ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image AnyKernel3/ || true
+          # Native builds put Image in arch/arm64/boot/
+          if [ -f ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image ]; then
+             cp ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image AnyKernel3/
+          else
+             echo "Image file not found! Checking directory..."
+             ls -R ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/
+             exit 1
+          fi
           cd AnyKernel3
           zip -r9 ../M146B-Native-Kernel.zip * -x .git*
 
