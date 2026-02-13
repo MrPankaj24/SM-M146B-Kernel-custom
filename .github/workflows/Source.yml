@@ -1,4 +1,4 @@
-name: Samsung M14 Native Build (No BTF)
+name: Samsung M14 Native Source Build
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          # Install dependencies including GCC (needed for some Samsung headers)
+          # Added libssl-dev (Fixes opensslv.h error) and other critical tools
           sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev repo zip curl libncurses5-dev gcc-aarch64-linux-gnu lz4 dwarves cpio
           
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
@@ -51,13 +51,14 @@ jobs:
           echo "=> Applying SUSFS Patches..."
           for patch in susfs4ksu/kernel_patches/*.patch; do
             echo "Applying $patch..."
+            # Using || true to prevent build stop on minor patch conflicts
             patch -p1 --forward < "$patch" || echo "Warning: $patch failed to apply, skipping..."
           done
 
       - name: Fix Broken Samsung Source
         working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
         run: |
-          echo "=> Fixing missing Camera Makefile..."
+          echo "=> Fixing missing Camera Makefile (Prevents build crash)..."
           mkdir -p drivers/media/platform/exynos/camera/vendor/default
           echo "obj-n := dummy.o" > drivers/media/platform/exynos/camera/vendor/default/Makefile
 
@@ -79,40 +80,45 @@ jobs:
           echo "Using defconfig: $(basename $DEFCONFIG_FILE)"
           make $(basename $DEFCONFIG_FILE)
           
-          echo "=> Enabling Features..."
+          echo "=> Enabling KSU & Tethering..."
           ./scripts/config --file .config --enable CONFIG_KSU
           ./scripts/config --file .config --enable CONFIG_KSU_SUSFS
           ./scripts/config --file .config --enable CONFIG_USB_CONFIGFS_F_TETHER
           ./scripts/config --file .config --enable CONFIG_USB_F_NCM
           ./scripts/config --file .config --enable CONFIG_USB_F_RNDIS
           
-          echo "=> Disabling Problematic Configs (Fixes Build Failures)..."
-          # Disable Warnings as Errors
-          ./scripts/config --file .config --disable CONFIG_WERROR
-          ./scripts/config --file .config --disable CONFIG_WERROR_ON_BEHALF_OF_DRIVERS
+          echo "=> Disabling Errors & Signing..."
+          # Fix 1: Disable Module Signing (Fixes openssl error)
+          ./scripts/config --file .config --disable CONFIG_MODULE_SIG
+          ./scripts/config --file .config --disable CONFIG_MODULE_SIG_ALL
+          ./scripts/config --file .config --disable CONFIG_MODULE_SIG_KEY
           
-          # Disable BTF Debug Info (Fixes pahole/ld.lld error)
+          # Fix 2: Disable BTF (Fixes pahole error)
           ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF
-          ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF_MODULES
+          
+          # Fix 3: Disable WERROR (Fixes strict compile errors)
+          ./scripts/config --file .config --disable CONFIG_WERROR
           
           make olddefconfig
 
       - name: Compile Kernel
         working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
         run: |
-          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-14/bin:$PATH
+          export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-14/bin:/usr/bin:$PATH
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CC=clang
           
           echo "=> Building Image..."
-          # KCFLAGS="-w" disables all compiler warnings
-          make -j$(nproc) LLVM=1 KCFLAGS="-w" Image
+          # KCFLAGS="-w" disables warnings
+          # -k ignores minor errors in isolated drivers
+          make -j$(nproc) -k LLVM=1 KCFLAGS="-w" Image
 
       - name: Package AnyKernel3
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
+          # Native builds put Image in arch/arm64/boot/
           cp ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image AnyKernel3/ || true
           cd AnyKernel3
           zip -r9 ../M146B-Native-Kernel.zip * -x .git*
