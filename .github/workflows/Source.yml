@@ -1,4 +1,4 @@
-name: Samsung M14 Native Build (Bulldozer Fix)
+name: Samsung M14 Native Build (No BTF)
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
       - name: Setup Build Environment
         run: |
           sudo apt-get update
-          # Added lz4 (compression), dwarves (pahole), and cpio (ramdisk)
+          # Install dependencies including GCC (needed for some Samsung headers)
           sudo apt-get install -y bc bison build-essential flex git libelf-dev libssl-dev repo zip curl libncurses5-dev gcc-aarch64-linux-gnu lz4 dwarves cpio
           
           mkdir -p $GITHUB_WORKSPACE/kernel_workspace
@@ -49,7 +49,6 @@ jobs:
           cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
           
           echo "=> Applying SUSFS Patches..."
-          # Apply patches safely
           for patch in susfs4ksu/kernel_patches/*.patch; do
             echo "Applying $patch..."
             patch -p1 --forward < "$patch" || echo "Warning: $patch failed to apply, skipping..."
@@ -80,16 +79,21 @@ jobs:
           echo "Using defconfig: $(basename $DEFCONFIG_FILE)"
           make $(basename $DEFCONFIG_FILE)
           
-          echo "=> Enabling Features & Disabling WERROR..."
+          echo "=> Enabling Features..."
           ./scripts/config --file .config --enable CONFIG_KSU
           ./scripts/config --file .config --enable CONFIG_KSU_SUSFS
           ./scripts/config --file .config --enable CONFIG_USB_CONFIGFS_F_TETHER
           ./scripts/config --file .config --enable CONFIG_USB_F_NCM
           ./scripts/config --file .config --enable CONFIG_USB_F_RNDIS
           
-          # NUCLEAR WERROR DISABLE
+          echo "=> Disabling Problematic Configs (Fixes Build Failures)..."
+          # Disable Warnings as Errors
           ./scripts/config --file .config --disable CONFIG_WERROR
           ./scripts/config --file .config --disable CONFIG_WERROR_ON_BEHALF_OF_DRIVERS
+          
+          # Disable BTF Debug Info (Fixes pahole/ld.lld error)
+          ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF
+          ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF_MODULES
           
           make olddefconfig
 
@@ -103,8 +107,7 @@ jobs:
           export CC=clang
           
           echo "=> Building Image..."
-          # KCFLAGS="-w" tells the compiler to shut up about all warnings
-          # LLVM=1 ensures we use the full Clang toolchain (ar, nm, etc.)
+          # KCFLAGS="-w" disables all compiler warnings
           make -j$(nproc) LLVM=1 KCFLAGS="-w" Image
 
       - name: Package AnyKernel3
