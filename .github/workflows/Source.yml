@@ -1,4 +1,4 @@
-name: Samsung M14 Native Build (Safe Mode)
+name: Samsung M14 Native Build (Super Safe Mode)
 
 on:
   workflow_dispatch:
@@ -91,16 +91,16 @@ jobs:
           ./scripts/config --file .config --enable CONFIG_USB_F_NCM
           ./scripts/config --file .config --enable CONFIG_USB_F_RNDIS
           
-          echo "=> Disabling Bloat & Errors (RAM Saving Mode)..."
+          echo "=> Disabling Bloat & Errors (MAXIMUM SAFETY)..."
           ./scripts/config --file .config --disable CONFIG_MODULE_SIG
           ./scripts/config --file .config --disable CONFIG_DEBUG_INFO
           ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_BTF
-          ./scripts/config --file .config --disable CONFIG_DEBUG_INFO_DWARF4
-          ./scripts/config --file .config --enable CONFIG_DEBUG_INFO_NONE
           ./scripts/config --file .config --disable CONFIG_WERROR
           ./scripts/config --file .config --disable CONFIG_SCSI_UFS_EXYNOS_SRPMB
-          
-          # Disable Samsung WiFi Logging to save RAM/Time
+          # Disabling these heavy features to save RAM
+          ./scripts/config --file .config --disable CONFIG_KASAN
+          ./scripts/config --file .config --disable CONFIG_KCSAN
+          ./scripts/config --file .config --disable CONFIG_UBSAN
           ./scripts/config --file .config --disable CONFIG_SAMSUNG_SCSC_LOG_COLLECTION
           
           make olddefconfig
@@ -114,20 +114,24 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CC=clang
           
-          echo "=> Building Image (Safe Slow Mode)..."
-          # -j1 ensures we do NOT run out of RAM.
-          make -j2 LLVM=1 KCFLAGS="-w" Image
+          echo "=> Building Image (SUPER SLOW MODE)..."
+          # -j1 is critical here. It prevents RAM exhaustion.
+          make -j1 LLVM=1 KCFLAGS="-w" Image
+
+      - name: Check for Image
+        working-directory: ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14
+        run: |
+          if [ -f arch/arm64/boot/Image ]; then
+             echo "SUCCESS: Kernel Image found!"
+          else
+             echo "FAILURE: Kernel Image not found."
+             exit 1
+          fi
 
       - name: Package AnyKernel3
         run: |
           git clone https://github.com/osm0sis/AnyKernel3.git
-          if [ -f ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image ]; then
-             cp ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image AnyKernel3/
-          else
-             echo "Image file not found! Checking directory..."
-             ls -R ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/
-             exit 1
-          fi
+          cp ${{ env.KERNEL_ROOT }}/android_kernel_samsung_m14/arch/arm64/boot/Image AnyKernel3/
           cd AnyKernel3
           zip -r9 ../M146B-Native-Kernel.zip * -x .git*
 
