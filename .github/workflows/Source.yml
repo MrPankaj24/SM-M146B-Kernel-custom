@@ -28,16 +28,16 @@ on:
   push:
     branches: [ main ]
     paths:
-      - '.github/workflows/main.yml'  # ❌ BUG: wrong file name, should be Source.yml
+      - '.github/workflows/Source.yml'
 
 env:
-  KERNEL_REPO:    "https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git"
-  DEVICE_MODEL:   "SM-M146B"
+  KERNEL_REPO:     "https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git"
+  DEVICE_MODEL:    "SM-M146B"
   DEVICE_CODENAME: "m14x"
-  TARGET_ARCH:    "arm64"
-  TARGET_SOC:     "s5e8535"
-  KERNEL_BRANCH:  ${{ github.event.inputs.KERNEL_BRANCH || 'main' }}
-  DEFCONFIG:      ${{ github.event.inputs.DEFCONFIG     || 'erd8535_t_gki_defconfig' }}
+  TARGET_ARCH:     "arm64"
+  TARGET_SOC:      "s5e8535"
+  KERNEL_BRANCH:   ${{ github.event.inputs.KERNEL_BRANCH || 'main' }}
+  DEFCONFIG:       ${{ github.event.inputs.DEFCONFIG     || 'erd8535_t_gki_defconfig' }}
   BUILD_ANYKERNEL: ${{ github.event.inputs.BUILD_ANYKERNEL || 'true' }}
 
 jobs:
@@ -48,6 +48,9 @@ jobs:
       contents: write
 
     steps:
+    # ----------------------------------------------------------
+    # 1. Install build dependencies
+    # ----------------------------------------------------------
     - name: "📦 Install build dependencies"
       run: |
         sudo apt-get update -qq
@@ -61,10 +64,22 @@ jobs:
           python3-markdown libxml2-utils xsltproc \
           libc6-dev libtinfo6 cpio kmod openssl libelf-dev \
           pahole libssl-dev libarchive-tools zstd rsync \
-          binutils-aarch64-linux-gnu ca-certificates ccache
+          binutils-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          binutils-arm-linux-gnueabi ca-certificates ccache \
+          lld llvm
+
+        # libtinfo5 shim for older host tools
         wget -q http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
         sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb
 
+        # Upgrade libstdc++6 to get GLIBCXX_3.4.32 (needed by Neutron-Clang ld.lld)
+        sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends libstdc++6
+
+    # ----------------------------------------------------------
+    # 2. Clone kernel source
+    # ----------------------------------------------------------
     - name: "🗂️ Clone kernel source"
       run: |
         BRANCH="${KERNEL_BRANCH}"
@@ -72,6 +87,9 @@ jobs:
         git clone --depth=1 --branch "${BRANCH}" "${KERNEL_REPO}" kernel-source
         echo "KERNEL_SOURCE=${{ github.workspace }}/kernel-source" >> "$GITHUB_ENV"
 
+    # ----------------------------------------------------------
+    # 3. Cache Neutron-Clang toolchain
+    # ----------------------------------------------------------
     - name: "⚡ Cache Neutron-Clang"
       id: cache-clang
       uses: actions/cache@v4
@@ -89,6 +107,9 @@ jobs:
         bash antman -S
         bash antman --patch=glibc
 
+    # ----------------------------------------------------------
+    # 4. Set up ccache
+    # ----------------------------------------------------------
     - name: "🗃️ Set up ccache"
       uses: actions/cache@v4
       with:
@@ -98,58 +119,92 @@ jobs:
           ccache-${{ env.TARGET_SOC }}-${{ env.DEFCONFIG }}-
           ccache-${{ env.TARGET_SOC }}-
 
+    # ----------------------------------------------------------
+    # 5. Configure environment variables
+    # ----------------------------------------------------------
     - name: "⚙️ Configure build environment"
       run: |
         CLANG_DIR="${{ github.workspace }}/toolchains/neutron-clang"
         KERNEL_OUT="${{ github.workspace }}/out"
         mkdir -p "${KERNEL_OUT}"
-        echo "CLANG_DIR=${CLANG_DIR}"          >> "$GITHUB_ENV"
-        echo "KERNEL_OUT=${KERNEL_OUT}"        >> "$GITHUB_ENV"
-        echo "PATH=${CLANG_DIR}/bin:${PATH}"   >> "$GITHUB_ENV"
-        echo "CCACHE_DIR=${HOME}/.ccache"      >> "$GITHUB_ENV"
-        ls "${CLANG_DIR}/bin/clang" || { echo "ERROR: Clang not found!"; exit 1; }
-        clang --version
 
+        echo "CLANG_DIR=${CLANG_DIR}"        >> "$GITHUB_ENV"
+        echo "KERNEL_OUT=${KERNEL_OUT}"      >> "$GITHUB_ENV"
+        echo "PATH=${CLANG_DIR}/bin:${PATH}" >> "$GITHUB_ENV"
+        echo "CCACHE_DIR=${HOME}/.ccache"    >> "$GITHUB_ENV"
+
+        # Replace ld.lld from Neutron-Clang with the system one to avoid
+        # GLIBCXX version mismatch (toolchain ld.lld needs GLIBCXX_3.4.32).
+        # After the libstdc++6 upgrade above this is no longer needed as a
+        # fallback, but we keep the system symlink as a safety net.
+        if [ -f "${CLANG_DIR}/bin/ld.lld" ]; then
+          SYSTEM_LLD="$(which ld.lld 2>/dev/null || true)";
+          if [ -n "${SYSTEM_LLD}" ]; then
+            echo "[INFO] Replacing toolchain ld.lld with system ld.lld: ${SYSTEM_LLD}"
+            cp -f "${SYSTEM_LLD}" "${CLANG_DIR}/bin/ld.lld"
+          fi
+        fi
+
+        ls "${CLANG_DIR}/bin/clang" || { echo "ERROR: Clang not found!"; exit 1; }
+        "${CLANG_DIR}/bin/clang" --version
+        "${CLANG_DIR}/bin/ld.lld" --version || true
+
+    # ----------------------------------------------------------
+    # 6. make defconfig
+    # ----------------------------------------------------------
     - name: "🛠️ Generate .config (defconfig)"
       run: |
         cd "${KERNEL_SOURCE}"
-        make O="${KERNEL_OUT}" \
-             ARCH="${TARGET_ARCH}" \
-             CC="ccache clang" \
-             CLANG_TRIPLE="aarch64-linux-gnu-" \
-             CROSS_COMPILE="aarch64-linux-gnu-" \
-             CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-             LLVM=1 LLVM_IAS=1 \
+        make O="${KERNEL_OUT}"                          \
+             ARCH="${TARGET_ARCH}"                      \
+             CC="ccache ${CLANG_DIR}/bin/clang"         \
+             LD="${CLANG_DIR}/bin/ld.lld"               \
+             CLANG_TRIPLE="aarch64-linux-gnu-"          \
+             CROSS_COMPILE="aarch64-linux-gnu-"         \
+             CROSS_COMPILE_ARM32="arm-linux-gnueabi-"   \
+             LLVM=1 LLVM_IAS=1                          \
              "${DEFCONFIG}"
 
+    # ----------------------------------------------------------
+    # 7. Build kernel
+    # ----------------------------------------------------------
     - name: "🔨 Build kernel"
       run: |
         cd "${KERNEL_SOURCE}"
         BUILD_START=$(date +"%s")
-        make -j$(nproc --all) \
-             O="${KERNEL_OUT}" \
-             ARCH="${TARGET_ARCH}" \
-             CC="ccache clang" \
-             CLANG_TRIPLE="aarch64-linux-gnu-" \
-             CROSS_COMPILE="aarch64-linux-gnu-" \
-             CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-             LLVM=1 LLVM_IAS=1 \
-             Image dtbs modules \
+
+        make -j$(nproc --all)                           \
+             O="${KERNEL_OUT}"                          \
+             ARCH="${TARGET_ARCH}"                      \
+             CC="ccache ${CLANG_DIR}/bin/clang"         \
+             LD="${CLANG_DIR}/bin/ld.lld"               \
+             CLANG_TRIPLE="aarch64-linux-gnu-"          \
+             CROSS_COMPILE="aarch64-linux-gnu-"         \
+             CROSS_COMPILE_ARM32="arm-linux-gnueabi-"   \
+             LLVM=1 LLVM_IAS=1                          \
+             Image dtbs modules                         \
              2>&1 | tee "${KERNEL_OUT}/build.log"
+
         BUILD_END=$(date +"%s")
         DIFF=$(( BUILD_END - BUILD_START ))
         echo "Build time: $(( DIFF / 60 ))m $(( DIFF % 60 ))s"
 
+    # ----------------------------------------------------------
+    # 8. Verify kernel image was produced
+    # ----------------------------------------------------------
     - name: "✅ Verify kernel image"
       run: |
         IMAGE="${KERNEL_OUT}/arch/${TARGET_ARCH}/boot/Image"
         if [ ! -f "${IMAGE}" ]; then
           echo "::error::Kernel Image not found! Build likely failed."
           tail -100 "${KERNEL_OUT}/build.log"
-          exit 1
+          exit 1;
         fi
         echo "[INFO] Image found: $(du -sh ${IMAGE})"
 
+    # ----------------------------------------------------------
+    # 9. Pack AnyKernel3 flashable zip (optional)
+    # ----------------------------------------------------------
     - name: "📦 Pack AnyKernel3 zip"
       if: env.BUILD_ANYKERNEL == 'true'
       run: |
@@ -161,25 +216,26 @@ jobs:
         [ -f "${KERNEL_OUT}/dtbo.img" ]         && cp "${KERNEL_OUT}/dtbo.img"        AnyKernel3/     || true
 
         cat > AnyKernel3/anykernel.sh << 'AKEOF'
-        properties() { '
-        kernel.string=SM-M146B Custom Kernel by MrPankaj24
-        do.devicecheck=1
-        do.modules=0
-        do.systemless=1
-        do.cleanup=1
-        do.cleanuponabort=0
-        device.name1=m14xnsxx
-        device.name2=m14xnxx
-        device.name3=SM-M146B
-        '; }
-        block=/dev/block/by-name/boot;
-        is_slot_device=auto;
-        ramdisk_compression=auto;
-        patch_vbmeta_flag=auto;
-        . tools/ak3-core.sh;
-        . split_img;
-        . repack_img;
-        AKEOF
+# AnyKernel3 config - SM-M146B
+properties() {
+kernel.string=SM-M146B Custom Kernel by MrPankaj24
+do.devicecheck=1
+do.modules=0
+do.systemless=1
+do.cleanup=1
+do.cleanuponabort=0
+device.name1=m14xnsxx
+device.name2=m14xnxx
+device.name3=SM-M146B
+}
+block=/dev/block/by-name/boot;
+is_slot_device=auto;
+ramdisk_compression=auto;
+patch_vbmeta_flag=auto;
+. tools/ak3-core.sh;
+. split_img;
+. repack_img;
+AKEOF
 
         ZIP_DATE=$(date +"%Y%m%d-%H%M")
         ZIP_NAME="${DEVICE_MODEL}-${DEVICE_CODENAME}-${ZIP_DATE}.zip"
@@ -188,19 +244,28 @@ jobs:
         echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
         echo "[INFO] Packed: ${ZIP_NAME}"
 
+    # ----------------------------------------------------------
+    # 10. Collect artifacts
+    # ----------------------------------------------------------
     - name: "🗂️ Collect artifacts"
       run: |
         ARTIFACTS_DIR="${{ github.workspace }}/artifacts"
         mkdir -p "${ARTIFACTS_DIR}"
+
         cp "${KERNEL_OUT}/arch/${TARGET_ARCH}/boot/Image" "${ARTIFACTS_DIR}/" || true
+
         DTB_PATH="${KERNEL_OUT}/arch/${TARGET_ARCH}/boot/dts/exynos"
         [ -f "${DTB_PATH}/${TARGET_SOC}.dtb" ] && cp "${DTB_PATH}/${TARGET_SOC}.dtb" "${ARTIFACTS_DIR}/" || true
         [ -f "${KERNEL_OUT}/dtbo.img" ]         && cp "${KERNEL_OUT}/dtbo.img"        "${ARTIFACTS_DIR}/" || true
         [ -f "${KERNEL_OUT}/build.log" ]        && cp "${KERNEL_OUT}/build.log"        "${ARTIFACTS_DIR}/" || true
         [ -n "${ZIP_NAME}" ] && [ -f "${{ github.workspace }}/${ZIP_NAME}" ] && \
           cp "${{ github.workspace }}/${ZIP_NAME}" "${ARTIFACTS_DIR}/" || true
+
         ls -lh "${ARTIFACTS_DIR}/"
 
+    # ----------------------------------------------------------
+    # 11. Upload artifacts
+    # ----------------------------------------------------------
     - name: "⬆️ Upload artifacts"
       uses: actions/upload-artifact@v4
       with:
@@ -208,6 +273,9 @@ jobs:
         path: ${{ github.workspace }}/artifacts/
         retention-days: 30
 
+    # ----------------------------------------------------------
+    # 12. Create GitHub Release (push to main only)
+    # ----------------------------------------------------------
     - name: "🚀 Create GitHub Release"
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
