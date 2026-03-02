@@ -28,7 +28,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - '.github/workflows/main.yml'
+      - '.github/workflows/main.yml'  # ❌ BUG: wrong file name, should be Source.yml
 
 env:
   KERNEL_REPO:    "https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git"
@@ -48,9 +48,6 @@ jobs:
       contents: write
 
     steps:
-    # ----------------------------------------------------------
-    # 1. Install build dependencies
-    # ----------------------------------------------------------
     - name: "📦 Install build dependencies"
       run: |
         sudo apt-get update -qq
@@ -68,9 +65,6 @@ jobs:
         wget -q http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb
         sudo dpkg -i libtinfo5_6.3-2ubuntu0.1_amd64.deb
 
-    # ----------------------------------------------------------
-    # 2. Clone kernel source
-    # ----------------------------------------------------------
     - name: "🗂️ Clone kernel source"
       run: |
         BRANCH="${KERNEL_BRANCH}"
@@ -78,9 +72,6 @@ jobs:
         git clone --depth=1 --branch "${BRANCH}" "${KERNEL_REPO}" kernel-source
         echo "KERNEL_SOURCE=${{ github.workspace }}/kernel-source" >> "$GITHUB_ENV"
 
-    # ----------------------------------------------------------
-    # 3. Cache Neutron-Clang toolchain
-    # ----------------------------------------------------------
     - name: "⚡ Cache Neutron-Clang"
       id: cache-clang
       uses: actions/cache@v4
@@ -98,9 +89,6 @@ jobs:
         bash antman -S
         bash antman --patch=glibc
 
-    # ----------------------------------------------------------
-    # 4. Set up ccache
-    # ----------------------------------------------------------
     - name: "🗃️ Set up ccache"
       uses: actions/cache@v4
       with:
@@ -110,26 +98,18 @@ jobs:
           ccache-${{ env.TARGET_SOC }}-${{ env.DEFCONFIG }}-
           ccache-${{ env.TARGET_SOC }}-
 
-    # ----------------------------------------------------------
-    # 5. Configure environment variables
-    # ----------------------------------------------------------
     - name: "⚙️ Configure build environment"
       run: |
         CLANG_DIR="${{ github.workspace }}/toolchains/neutron-clang"
         KERNEL_OUT="${{ github.workspace }}/out"
         mkdir -p "${KERNEL_OUT}"
-
         echo "CLANG_DIR=${CLANG_DIR}"          >> "$GITHUB_ENV"
         echo "KERNEL_OUT=${KERNEL_OUT}"        >> "$GITHUB_ENV"
         echo "PATH=${CLANG_DIR}/bin:${PATH}"   >> "$GITHUB_ENV"
         echo "CCACHE_DIR=${HOME}/.ccache"      >> "$GITHUB_ENV"
-
         ls "${CLANG_DIR}/bin/clang" || { echo "ERROR: Clang not found!"; exit 1; }
         clang --version
 
-    # ----------------------------------------------------------
-    # 6. make defconfig
-    # ----------------------------------------------------------
     - name: "🛠️ Generate .config (defconfig)"
       run: |
         cd "${KERNEL_SOURCE}"
@@ -142,14 +122,10 @@ jobs:
              LLVM=1 LLVM_IAS=1 \
              "${DEFCONFIG}"
 
-    # ----------------------------------------------------------
-    # 7. Build kernel
-    # ----------------------------------------------------------
     - name: "🔨 Build kernel"
       run: |
         cd "${KERNEL_SOURCE}"
         BUILD_START=$(date +"%s")
-
         make -j$(nproc --all) \
              O="${KERNEL_OUT}" \
              ARCH="${TARGET_ARCH}" \
@@ -160,14 +136,10 @@ jobs:
              LLVM=1 LLVM_IAS=1 \
              Image dtbs modules \
              2>&1 | tee "${KERNEL_OUT}/build.log"
-
         BUILD_END=$(date +"%s")
         DIFF=$(( BUILD_END - BUILD_START ))
         echo "Build time: $(( DIFF / 60 ))m $(( DIFF % 60 ))s"
 
-    # ----------------------------------------------------------
-    # 8. Verify kernel image was produced
-    # ----------------------------------------------------------
     - name: "✅ Verify kernel image"
       run: |
         IMAGE="${KERNEL_OUT}/arch/${TARGET_ARCH}/boot/Image"
@@ -178,9 +150,6 @@ jobs:
         fi
         echo "[INFO] Image found: $(du -sh ${IMAGE})"
 
-    # ----------------------------------------------------------
-    # 9. Pack AnyKernel3 flashable zip (optional)
-    # ----------------------------------------------------------
     - name: "📦 Pack AnyKernel3 zip"
       if: env.BUILD_ANYKERNEL == 'true'
       run: |
@@ -219,28 +188,19 @@ jobs:
         echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
         echo "[INFO] Packed: ${ZIP_NAME}"
 
-    # ----------------------------------------------------------
-    # 10. Collect artifacts
-    # ----------------------------------------------------------
     - name: "🗂️ Collect artifacts"
       run: |
         ARTIFACTS_DIR="${{ github.workspace }}/artifacts"
         mkdir -p "${ARTIFACTS_DIR}"
-
         cp "${KERNEL_OUT}/arch/${TARGET_ARCH}/boot/Image" "${ARTIFACTS_DIR}/" || true
-
         DTB_PATH="${KERNEL_OUT}/arch/${TARGET_ARCH}/boot/dts/exynos"
         [ -f "${DTB_PATH}/${TARGET_SOC}.dtb" ] && cp "${DTB_PATH}/${TARGET_SOC}.dtb" "${ARTIFACTS_DIR}/" || true
         [ -f "${KERNEL_OUT}/dtbo.img" ]         && cp "${KERNEL_OUT}/dtbo.img"        "${ARTIFACTS_DIR}/" || true
         [ -f "${KERNEL_OUT}/build.log" ]        && cp "${KERNEL_OUT}/build.log"        "${ARTIFACTS_DIR}/" || true
         [ -n "${ZIP_NAME}" ] && [ -f "${{ github.workspace }}/${ZIP_NAME}" ] && \
           cp "${{ github.workspace }}/${ZIP_NAME}" "${ARTIFACTS_DIR}/" || true
-
         ls -lh "${ARTIFACTS_DIR}/"
 
-    # ----------------------------------------------------------
-    # 11. Upload artifacts
-    # ----------------------------------------------------------
     - name: "⬆️ Upload artifacts"
       uses: actions/upload-artifact@v4
       with:
@@ -248,9 +208,6 @@ jobs:
         path: ${{ github.workspace }}/artifacts/
         retention-days: 30
 
-    # ----------------------------------------------------------
-    # 12. Create GitHub Release (push to main only)
-    # ----------------------------------------------------------
     - name: "🚀 Create GitHub Release"
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: softprops/action-gh-release@v2
