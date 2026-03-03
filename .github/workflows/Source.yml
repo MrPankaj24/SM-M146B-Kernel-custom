@@ -14,9 +14,9 @@ on:
         required: false
         default: 'main'
       DEFCONFIG:
-        description: 'Defconfig name'
+        description: 'Defconfig name (must exist in arch/arm64/configs/)'
         required: false
-        default: 'erd8535_t_gki_defconfig'
+        default: 's5e8535-m14xnsxx_defconfig'
       BUILD_ANYKERNEL:
         description: 'Pack AnyKernel3 flashable zip?'
         required: false
@@ -25,10 +25,6 @@ on:
         options:
           - 'true'
           - 'false'
-  push:
-    branches: [ main ]
-    paths:
-      - '.github/workflows/Source.yml'
 
 env:
   KERNEL_REPO:     "https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git"
@@ -36,18 +32,37 @@ env:
   DEVICE_CODENAME: "m14x"
   TARGET_ARCH:     "arm64"
   TARGET_SOC:      "s5e8535"
-  KERNEL_BRANCH:   ${{ github.event.inputs.KERNEL_BRANCH || 'main' }}
-  DEFCONFIG:       ${{ github.event.inputs.DEFCONFIG || 'erd8535_t_gki_defconfig' }}
-  BUILD_ANYKERNEL: ${{ github.event.inputs.BUILD_ANYKERNEL || 'true' }}
 
 jobs:
   build:
-    name: "🏗️ Build Kernel (${{ github.event.inputs.DEFCONFIG || 'erd8535_t_gki_defconfig' }})"
+    name: "🏗️ Build Kernel (${{ github.event.inputs.DEFCONFIG || 's5e8535-m14xnsxx_defconfig' }})"
     runs-on: ubuntu-22.04
     permissions:
       contents: write
 
     steps:
+
+    # ----------------------------------------------------------
+    # 0. Resolve inputs with safe fallback defaults
+    # ----------------------------------------------------------
+    - name: "🔧 Resolve build inputs"
+      run: |
+        KERNEL_BRANCH="${{ github.event.inputs.KERNEL_BRANCH }}"
+        DEFCONFIG="${{ github.event.inputs.DEFCONFIG }}"
+        BUILD_ANYKERNEL="${{ github.event.inputs.BUILD_ANYKERNEL }}"
+
+        # Apply defaults if empty (e.g. triggered by push or API)
+        KERNEL_BRANCH="${KERNEL_BRANCH:-main}"
+        DEFCONFIG="${DEFCONFIG:-s5e8535-m14xnsxx_defconfig}"
+        BUILD_ANYKERNEL="${BUILD_ANYKERNEL:-true}"
+
+        echo "KERNEL_BRANCH=${KERNEL_BRANCH}"   >> "$GITHUB_ENV"
+        echo "DEFCONFIG=${DEFCONFIG}"           >> "$GITHUB_ENV"
+        echo "BUILD_ANYKERNEL=${BUILD_ANYKERNEL}" >> "$GITHUB_ENV"
+
+        echo "[INFO] KERNEL_BRANCH=${KERNEL_BRANCH}"
+        echo "[INFO] DEFCONFIG=${DEFCONFIG}"
+        echo "[INFO] BUILD_ANYKERNEL=${BUILD_ANYKERNEL}"
 
     # ----------------------------------------------------------
     # 1. Install build dependencies
@@ -83,13 +98,28 @@ jobs:
     # ----------------------------------------------------------
     - name: "🗂️ Clone kernel source"
       run: |
-        BRANCH="${KERNEL_BRANCH}"
-        echo "[INFO] Cloning ${KERNEL_REPO} @ ${BRANCH}"
-        git clone --depth=1 --branch "${BRANCH}" "${KERNEL_REPO}" kernel-source
+        echo "[INFO] Cloning ${KERNEL_REPO} @ ${KERNEL_BRANCH}"
+        git clone --depth=1 --branch "${KERNEL_BRANCH}" "${KERNEL_REPO}" kernel-source
         echo "KERNEL_SOURCE=${{ github.workspace }}/kernel-source" >> "$GITHUB_ENV"
 
     # ----------------------------------------------------------
-    # 3. Cache Neutron-Clang toolchain
+    # 3. Validate defconfig exists
+    # ----------------------------------------------------------
+    - name: "🔍 Validate defconfig"
+      run: |
+        DEFCONFIG_PATH="${{ github.workspace }}/kernel-source/arch/${TARGET_ARCH}/configs/${DEFCONFIG}"
+        echo "[INFO] Looking for: ${DEFCONFIG_PATH}"
+        if [ ! -f "${DEFCONFIG_PATH}" ]; then
+          echo "::error::Defconfig not found: arch/${TARGET_ARCH}/configs/${DEFCONFIG}"
+          echo ""
+          echo "Available defconfigs in arch/${TARGET_ARCH}/configs/:"
+          ls "${{ github.workspace }}/kernel-source/arch/${TARGET_ARCH}/configs/" || echo "(directory empty or not found)"
+          exit 1
+        fi
+        echo "[INFO] ✅ Defconfig found: ${DEFCONFIG}"
+
+    # ----------------------------------------------------------
+    # 4. Cache Neutron-Clang toolchain
     # ----------------------------------------------------------
     - name: "⚡ Cache Neutron-Clang"
       id: cache-clang
@@ -109,7 +139,7 @@ jobs:
         bash antman --patch=glibc
 
     # ----------------------------------------------------------
-    # 4. Set up ccache
+    # 5. Set up ccache
     # ----------------------------------------------------------
     - name: "🗃️ Set up ccache"
       uses: actions/cache@v4
@@ -121,7 +151,7 @@ jobs:
           ccache-${{ env.TARGET_SOC }}-
 
     # ----------------------------------------------------------
-    # 5. Configure build environment
+    # 6. Configure build environment
     # ----------------------------------------------------------
     - name: "⚙️ Configure build environment"
       run: |
@@ -148,7 +178,7 @@ jobs:
         "${CLANG_DIR}/bin/ld.lld" --version || true
 
     # ----------------------------------------------------------
-    # 6. Generate .config
+    # 7. Generate .config
     # ----------------------------------------------------------
     - name: "🛠️ Generate .config (defconfig)"
       run: |
@@ -164,7 +194,7 @@ jobs:
              "${DEFCONFIG}"
 
     # ----------------------------------------------------------
-    # 7. Build kernel
+    # 8. Build kernel
     # ----------------------------------------------------------
     - name: "🔨 Build kernel"
       run: |
@@ -188,7 +218,7 @@ jobs:
         echo "Build time: $(( DIFF / 60 ))m $(( DIFF % 60 ))s"
 
     # ----------------------------------------------------------
-    # 8. Verify kernel image
+    # 9. Verify kernel image
     # ----------------------------------------------------------
     - name: "✅ Verify kernel image"
       run: |
@@ -201,7 +231,7 @@ jobs:
         echo "[INFO] Image found: $(du -sh ${IMAGE})"
 
     # ----------------------------------------------------------
-    # 9. Pack AnyKernel3 zip
+    # 10. Pack AnyKernel3 zip
     # ----------------------------------------------------------
     - name: "📦 Pack AnyKernel3 zip"
       if: env.BUILD_ANYKERNEL == 'true'
@@ -243,7 +273,7 @@ AKEOF
         echo "[INFO] Packed: ${ZIP_NAME}"
 
     # ----------------------------------------------------------
-    # 10. Collect artifacts
+    # 11. Collect artifacts
     # ----------------------------------------------------------
     - name: "🗂️ Collect artifacts"
       run: |
@@ -259,7 +289,7 @@ AKEOF
         ls -lh "${ARTIFACTS_DIR}/"
 
     # ----------------------------------------------------------
-    # 11. Upload artifacts
+    # 12. Upload artifacts
     # ----------------------------------------------------------
     - name: "⬆️ Upload artifacts"
       uses: actions/upload-artifact@v4
@@ -269,10 +299,10 @@ AKEOF
         retention-days: 30
 
     # ----------------------------------------------------------
-    # 12. Create GitHub Release (push to main only)
+    # 13. Create GitHub Release
     # ----------------------------------------------------------
     - name: "🚀 Create GitHub Release"
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v2
       with:
         tag_name: "kernel-${{ env.DEVICE_MODEL }}-${{ github.run_number }}"
