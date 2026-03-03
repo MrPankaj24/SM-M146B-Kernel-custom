@@ -4,7 +4,9 @@
 #  Target : Samsung SM-M146B (Exynos s5e8535)
 # ============================================================
 name: 🏗️ Build Kernel
+
 on:
+
   workflow_dispatch:
     inputs:
       KERNEL_BRANCH:
