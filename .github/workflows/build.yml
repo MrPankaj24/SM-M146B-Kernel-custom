@@ -1,10 +1,10 @@
-name: 🏗️ Build Kernel (s5e8535 / M14 - Clang 22)
+name: 🏗️ Build Kernel (ReSukiSU s5e8535 / M14 - Clang 22)
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+#  push:
+#    branches: [ main, master ]
+#  pull_request:
+#    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
@@ -73,8 +73,8 @@ jobs:
           rm -rf KernelSU
           
           # Clone SukiSU-Ultra directly to satisfy the symlink
-          echo "Cloning SukiSU-Ultra..."
-          git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra KernelSU
+          echo "Cloning ReSukiSU..."
+          git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           
           ls -la | sed -n '1,20p' || true
 
