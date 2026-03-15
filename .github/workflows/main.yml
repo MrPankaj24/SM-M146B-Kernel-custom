@@ -54,15 +54,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Checkout kernel_common_modifications into kernel_common/
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}
-          path: kernel_common
-          # Use GITHUB_TOKEN if the repo is public or this workflow has access.
-          # If private, set a Personal Access Token in the repository secrets named
-          # KERNEL_COMMON_PAT and replace the line below with: token: ${{ secrets.KERNEL_COMMON_PAT }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Clone kernel_common_modifications (git clone)
+        run: |
+          # Clone into kernel_common/ using HTTPS (no token required for public repo)
+          git clone https://github.com/${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}.git kernel_common
+          # Show a few files to confirm
+          ls -la kernel_common | sed -n '1,20p' || true
 
       - name: Setup apt repo for LLVM 22 and install build dependencies
         run: |
@@ -89,7 +86,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/.github/workflows/build-kernel.yml') }}-${{ github.sha }}
+          key: ${{ runner.os }}-ccache-${{ hashFiles('.github/workflows/main.yml') }}-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-ccache-
 
