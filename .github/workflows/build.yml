@@ -1,19 +1,20 @@
-name: Build Kernel (clone kernel_common_modifications then build)
+name: 🏗️ Build Kernel (test s5e8535 / M14 - Clang 22)
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
-      - master
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual trigger from GitHub UI
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Clone kernel_common_modifications and build
-    runs-on: ubuntu-22.04
+    name: 🏗️ Build Kernel (s5e8535 / M14)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     env:
       # The cloned repo will be placed into $GITHUB_WORKSPACE/kernel_common
       KERNEL_REPO_OWNER: MrPankaj24
@@ -57,7 +58,7 @@ jobs:
 
       - name: Clone kernel_common_modifications
         run: |
-          # Added --depth=1 to clone much faster since we don't need full commit history to build
+          # Clone much faster since we don't need full commit history to build
           git clone --depth=1 https://github.com/${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}.git kernel_common
           ls -la kernel_common | sed -n '1,20p' || true
 
@@ -66,9 +67,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y
           
-          # Add LLVM apt repo for clang-22
+          # Add LLVM apt repo for clang-22 (Updated for Ubuntu 24.04 "noble")
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/jammy/ llvm-toolchain-jammy-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
@@ -77,7 +78,7 @@ jobs:
             python3 python3-distutils git ccache rsync \
             libssl-dev libelf-dev dwarves device-tree-compiler \
             file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
-            lz4 zstd cpio # Added common compression tools often needed for ramdisk/image
+            lz4 zstd cpio
             
           # Prepare ccache
           mkdir -p "${CCACHE_DIR}"
