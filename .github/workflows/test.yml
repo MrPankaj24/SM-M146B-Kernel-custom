@@ -73,11 +73,11 @@ jobs:
           echo "Applying 70_ksu_safety patch..."
           patch -p1 < ../patches/70_ksu_safety-resukisu-5.15.patch
 
-      - name: Step 4 - Apply 65_zeromount-adb-filter to KernelSU
+      - name: Step 3 - Apply 70_ksu_safety Patch to KernelSU
         run: |
           cd kernel_common/KernelSU
-          echo "Applying 65_zeromount-adb-filter patch inside KernelSU..."
-          patch -p1 < ../../patches/65_zeromount-adb-filter-android13-5.15.patch
+          echo "Applying 70_ksu_safety patch inside KernelSU..."
+          patch -p1 < ../../patches/70_ksu_safety-resukisu-5.15.patch
 
       - name: Generate Verification Diff
         run: |
