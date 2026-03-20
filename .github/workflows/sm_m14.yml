@@ -42,10 +42,11 @@ jobs:
     timeout-minutes: 180
 
     env:
-      ANDROID_VERSION: 15
+      ANDROID_VERSION: "15"
       KERNEL_VERSION: "5.15"
       DEVICE: m14x
-      ANDROID_PLATFORM_VERSION: 15
+      PLATFORM_VERSION: "15"
+      ANDROID_MAJOR_VERSION: "t"
       DEVICE_PATCHES: SM-M146B-Oneui7-ADYJ2
 
     steps:
@@ -445,67 +446,67 @@ jobs:
           echo "📋 Defconfig: $DEFCONFIG_CMD"
 
           cat > build_ci.sh << 'BUILDEOF'
-#!/usr/bin/env bash
-set -e
+          #!/usr/bin/env bash
+          set -e
 
-export ABI_DEFINITION=
-export KMI_SYMBOL_LIST_STRICT_MODE=0
-export SKIP_ABI_CHECKS=1
-export KMI_ENFORCE=0
+          export ABI_DEFINITION=
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export SKIP_ABI_CHECKS=1
+          export KMI_ENFORCE=0
 
-# All variables passed on make command line = HIGHEST PRIORITY
-MAKE_ARGS=(
-    -j$(nproc --all)
-    O=out
-    ARCH=arm64
-    SUBARCH=arm64
-    CC=clang
-    HOSTCC=clang
-    CROSS_COMPILE=aarch64-linux-gnu-
-    CLANG_TRIPLE=aarch64-linux-gnu-
-    LLVM=1
-    LLVM_IAS=1
-    LTO=thin
-    TARGET_SOC=s5e8535
-    SOC_NAME=s5e8535
-    DTC_FLAGS="-@"
-    DEPMOD=depmod
-    PLATFORM_VERSION=15
-    ANDROID_MAJOR_VERSION=t
-)
+          # All variables passed on make command line = HIGHEST PRIORITY
+          MAKE_ARGS=(
+              -j$(nproc --all)
+              O=out
+              ARCH=arm64
+              SUBARCH=arm64
+              CC=clang
+              HOSTCC=clang
+              CROSS_COMPILE=aarch64-linux-gnu-
+              CLANG_TRIPLE=aarch64-linux-gnu-
+              LLVM=1
+              LLVM_IAS=1
+              LTO=thin
+              TARGET_SOC=s5e8535
+              SOC_NAME=s5e8535
+              DTC_FLAGS="-@"
+              DEPMOD=depmod
+              PLATFORM_VERSION=15
+              ANDROID_MAJOR_VERSION=t
+          )
 
-echo "============================================"
-echo "🏗️  SM-M146B Kernel Build"
-echo "    CC:    $(which clang)"
-echo "    Clang: $(clang --version | head -1)"
-echo "    Args:  ${MAKE_ARGS[*]}"
-echo "============================================"
+          echo "============================================"
+          echo "🏗️  SM-M146B Kernel Build"
+          echo "    CC:    $(which clang)"
+          echo "    Clang: $(clang --version | head -1)"
+          echo "    Args:  ${MAKE_ARGS[*]}"
+          echo "============================================"
 
-rm -rf out modules_out
+          rm -rf out modules_out
 
-echo "📋 Step A: Config..."
-make "${MAKE_ARGS[@]}" __DEFCONFIG_PLACEHOLDER__
+          echo "📋 Step A: Config..."
+          make "${MAKE_ARGS[@]}" __DEFCONFIG_PLACEHOLDER__
 
-echo "📋 Step B: Prepare..."
-make -j4 O=out ARCH=arm64 PLATFORM_VERSION=15 ANDROID_MAJOR_VERSION=t prepare
+          echo "📋 Step B: Prepare..."
+          make -j4 O=out ARCH=arm64 PLATFORM_VERSION=15 ANDROID_MAJOR_VERSION=t prepare
 
-echo "📋 Step C: Compile..."
-make "${MAKE_ARGS[@]}"
+          echo "📋 Step C: Compile..."
+          make "${MAKE_ARGS[@]}"
 
-echo "📋 Step D: Modules..."
-mkdir -p modules_out
-make "${MAKE_ARGS[@]}" \
-    INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
-    INSTALL_MOD_PATH="$(pwd)/modules_out" \
-    modules_install || true
+          echo "📋 Step D: Modules..."
+          mkdir -p modules_out
+          make "${MAKE_ARGS[@]}" \
+              INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
+              INSTALL_MOD_PATH="$(pwd)/modules_out" \
+              modules_install || true
 
-if [ -f "out/arch/arm64/boot/Image" ]; then
-    echo "✅ BUILD SUCCESSFUL! ($(ls -lh out/arch/arm64/boot/Image | awk '{print $5}'))"
-else
-    echo "❌ BUILD FAILED!"
-    exit 1
-fi
-BUILDEOF
+          if [ -f "out/arch/arm64/boot/Image" ]; then
+              echo "✅ BUILD SUCCESSFUL! ($(ls -lh out/arch/arm64/boot/Image | awk '{print $5}'))"
+          else
+              echo "❌ BUILD FAILED!"
+              exit 1
+          fi
+          BUILDEOF
 
           # Insert actual defconfig command
           sed -i "s|__DEFCONFIG_PLACEHOLDER__|${DEFCONFIG_CMD}|" build_ci.sh
