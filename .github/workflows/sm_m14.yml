@@ -540,81 +540,81 @@ jobs:
       # 8. BUILD KERNEL
       ########################################
       - name: 🏗️ Build Kernel
+        env:
+          PLATFORM_VERSION: "15"
+          ANDROID_MAJOR_VERSION: "t"
+          TARGET_SOC: s5e8535
+          SOC_NAME: s5e8535
+          ARCH: arm64
+          SUBARCH: arm64
+          LLVM: "1"
+          LLVM_IAS: "1"
+          DTC_FLAGS: "-@"
+          DEPMOD: depmod
         run: |
           set -e
           cd "$KERNEL_SRC"
 
-          # Ensure AOSP clang is first in PATH
           export PATH="${CLANG_DIR}:${BUILD_TOOLS_DIR}:$PATH"
+
+          # Force export Samsung variables
+          export PLATFORM_VERSION="15"
+          export ANDROID_MAJOR_VERSION="t"
+          export TARGET_SOC="s5e8535"
+          export SOC_NAME="s5e8535"
+          export ARCH="arm64"
+          export SUBARCH="arm64"
+          export LLVM="1"
+          export LLVM_IAS="1"
+          export DTC_FLAGS="-@"
+          export DEPMOD="depmod"
+          export LTO="thin"
+          export CC="clang"
+          export HOSTCC="clang"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          export CLANG_TRIPLE="aarch64-linux-gnu-"
 
           echo "============================================"
           echo "🏗️  Building SM-M146B Kernel"
-          echo "    Method:   ${{ inputs.build_method }}"
-          echo "    Android:  ${{ env.ANDROID_VERSION }}"
-          echo "    Kernel:   ${{ env.KERNEL_VERSION }}"
-          echo "    KSU:      ${{ inputs.ksu_variant }}"
-          echo "    Clang:    $(clang --version | head -1)"
+          echo "    Method:            ${{ inputs.build_method }}"
+          echo "    KSU:               ${{ inputs.ksu_variant }}"
+          echo "    PLATFORM_VERSION:  $PLATFORM_VERSION"
+          echo "    ANDROID_MAJOR_VER: $ANDROID_MAJOR_VERSION"
+          echo "    Clang:             $(clang --version | head -1)"
           echo "============================================"
 
           if [ "${{ inputs.build_method }}" == "Method1-Patch" ]; then
-            ########################################
-            # METHOD 1: Samsung build_kernel.sh
-            ########################################
-            echo "🔨 Method 1: Using Samsung build_kernel.sh"
-
+            echo "🔨 Method 1: Samsung build_kernel.sh"
             if [ -f "./build_kernel.sh" ]; then
               chmod +x build_kernel.sh
-              LTO=thin ./build_kernel.sh
+              ./build_kernel.sh
             else
-              echo "⚠ build_kernel.sh not found — falling back to make"
-              export ARCH=arm64
-              export CROSS_COMPILE=aarch64-linux-gnu-
-              export CC=clang
-              export LLVM=1
-              export LLVM_IAS=1
-
               make O=out s5e8535-m14xnsxx_defconfig
               make -j$(nproc --all) O=out
             fi
 
           elif [ "${{ inputs.build_method }}" == "Method2-ConfigFragments" ]; then
-            ########################################
-            # METHOD 2: make with config fragments
-            ########################################
-            echo "🔨 Method 2: Using make with config fragments"
-
-            export ARCH=arm64
-            export SUBARCH=arm64
-            export CC=clang
-            export HOSTCC=clang
-            export LLVM=1
-            export LLVM_IAS=1
-            export CROSS_COMPILE=aarch64-linux-gnu-
-            export CLANG_TRIPLE=aarch64-linux-gnu-
-            export PLATFORM_VERSION=${{ env.PLATFORM_VERSION }}
-            export ANDROID_MAJOR_VERSION=${{ env.ANDROID_MAJOR_VERSION }}
-            export TARGET_SOC=${{ env.TARGET_SOC }}
-
+            echo "🔨 Method 2: make with config fragments"
             mkdir -p out
 
-            # Build config fragment list
+            # Build config list (only existing fragments)
             CONFIG_LIST="s5e8535-m14xnsxx_defconfig"
-            for cfg in su.config perf.config custom.config nethunter.config; do
-              if [ -f "$cfg" ]; then
+            for cfg in su.config custom.config perf.config; do
+              if [ -f "arch/arm64/configs/$cfg" ]; then
                 CONFIG_LIST="$CONFIG_LIST $cfg"
-                echo "  ✅ Using: $cfg"
+                echo "  ✅ $cfg"
               else
-                echo "  ⏭️ Skipping: $cfg (not found)"
+                echo "  ⏭️ $cfg (not found, skipping)"
               fi
             done
 
-            echo "📋 Step A: Generate Config ($CONFIG_LIST)..."
+            echo "📋 Config: $CONFIG_LIST"
             make -j$(nproc --all) O=out $CONFIG_LIST 2>&1 | tee build_generate_config.log
 
-            echo "📋 Step B: Prepare..."
+            echo "📋 Prepare..."
             make -j4 prepare O=out 2>&1 | tee -a build_generate_config.log
 
-            echo "📋 Step C: Compile..."
+            echo "📋 Compile..."
             export LD=ld.lld
             make -j$(nproc --all) O=out 2>&1 | tee build.log
           fi
