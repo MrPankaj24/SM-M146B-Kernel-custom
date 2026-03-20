@@ -42,9 +42,10 @@ jobs:
     timeout-minutes: 180
 
     env:
-      ANDROID_VERSION: android13
+      ANDROID_VERSION: 15
       KERNEL_VERSION: "5.15"
       DEVICE: m14x
+      ANDROID_PLATFORM_VERSION: 15
       DEVICE_PATCHES: SM-M146B-Oneui7-ADYJ2
 
     steps:
@@ -432,141 +433,91 @@ jobs:
         run: |
           cd "$KERNEL_SRC"
 
-          # Determine defconfig + config fragments
           if [ "${{ inputs.build_method }}" == "Method1-Patch" ]; then
             DEFCONFIG_CMD="s5e8535-m14xnsxx_defconfig"
           else
-            # Method 2: add config fragments
             DEFCONFIG_CMD="s5e8535-m14xnsxx_defconfig"
             for cfg in su.config custom.config perf.config; do
-              if [ -f "arch/arm64/configs/$cfg" ]; then
-                DEFCONFIG_CMD="$DEFCONFIG_CMD $cfg"
-              fi
+              [ -f "arch/arm64/configs/$cfg" ] && DEFCONFIG_CMD="$DEFCONFIG_CMD $cfg"
             done
           fi
 
-          echo "📋 Defconfig command: $DEFCONFIG_CMD"
+          echo "📋 Defconfig: $DEFCONFIG_CMD"
 
-          cat > build_ci.sh << BUILDSCRIPT
-          #!/usr/bin/env bash
-          set -e
+          cat > build_ci.sh << 'BUILDEOF'
+#!/usr/bin/env bash
+set -e
 
-          # ==========================================
-          # ABI & KMI Settings (skip all checks)
-          # ==========================================
-          export ABI_DEFINITION=
-          export KMI_SYMBOL_LIST_STRICT_MODE=0
-          export SKIP_ABI_CHECKS=1
-          export KMI_ENFORCE=0
+export ABI_DEFINITION=
+export KMI_SYMBOL_LIST_STRICT_MODE=0
+export SKIP_ABI_CHECKS=1
+export KMI_ENFORCE=0
 
-          # ==========================================
-          # Device & Build Variables
-          # ==========================================
-          export DEVICE="m14x"
-          export ARCH=arm64
-          export SUBARCH=arm64
-          export TARGET_SOC=s5e8535
-          export SOC_NAME=s5e8535
-          export DTC_FLAGS="-@"
-          export DEPMOD=depmod
+# All variables passed on make command line = HIGHEST PRIORITY
+MAKE_ARGS=(
+    -j$(nproc --all)
+    O=out
+    ARCH=arm64
+    SUBARCH=arm64
+    CC=clang
+    HOSTCC=clang
+    CROSS_COMPILE=aarch64-linux-gnu-
+    CLANG_TRIPLE=aarch64-linux-gnu-
+    LLVM=1
+    LLVM_IAS=1
+    LTO=thin
+    TARGET_SOC=s5e8535
+    SOC_NAME=s5e8535
+    DTC_FLAGS="-@"
+    DEPMOD=depmod
+    PLATFORM_VERSION=15
+    ANDROID_MAJOR_VERSION=t
+)
 
-          # ==========================================
-          # CRITICAL: Samsung SCSC/WiFi Variables
-          # ==========================================
-          export PLATFORM_VERSION=15
-          export ANDROID_MAJOR_VERSION=t
+echo "============================================"
+echo "🏗️  SM-M146B Kernel Build"
+echo "    CC:    $(which clang)"
+echo "    Clang: $(clang --version | head -1)"
+echo "    Args:  ${MAKE_ARGS[*]}"
+echo "============================================"
 
-          # ==========================================
-          # Toolchain (AOSP Clang r450784d)
-          # ==========================================
-          export PATH="${CLANG_DIR}:${BUILD_TOOLS_DIR}:${PREBUILT_DIR}:\$PATH"
-          export CC=clang
-          export HOSTCC=clang
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export LLVM=1
-          export LTO=thin
-          export LLVM_IAS=1
+rm -rf out modules_out
 
-          # ==========================================
-          # Paths
-          # ==========================================
-          KERNEL_ROOT="$KERNEL_SRC"
-          OUTDIR="\$KERNEL_ROOT/out"
-          MODULES_OUTDIR="\$KERNEL_ROOT/modules_out"
+echo "📋 Step A: Config..."
+make "${MAKE_ARGS[@]}" __DEFCONFIG_PLACEHOLDER__
 
-          # ==========================================
-          # Clean
-          # ==========================================
-          echo "Cleaning old artifacts..."
-          rm -rf "\$OUTDIR" "\$MODULES_OUTDIR"
+echo "📋 Step B: Prepare..."
+make -j4 O=out ARCH=arm64 PLATFORM_VERSION=15 ANDROID_MAJOR_VERSION=t prepare
 
-          # ==========================================
-          # Verify
-          # ==========================================
-          echo "============================================"
-          echo "🏗️  SM-M146B Kernel Build"
-          echo "    PLATFORM_VERSION:  \$PLATFORM_VERSION"
-          echo "    ANDROID_MAJOR_VER: \$ANDROID_MAJOR_VERSION"
-          echo "    CC:                \$(which clang)"
-          echo "    Clang:             \$(clang --version | head -1)"
-          echo "    CROSS_COMPILE:     \$CROSS_COMPILE"
-          echo "============================================"
+echo "📋 Step C: Compile..."
+make "${MAKE_ARGS[@]}"
 
-          # ==========================================
-          # Step A: Generate Config
-          # ==========================================
-          echo "📋 Step A: Generating config..."
-          echo "   Defconfig: ${DEFCONFIG_CMD}"
-          make -j\$(nproc --all) O=out ${DEFCONFIG_CMD}
+echo "📋 Step D: Modules..."
+mkdir -p modules_out
+make "${MAKE_ARGS[@]}" \
+    INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
+    INSTALL_MOD_PATH="$(pwd)/modules_out" \
+    modules_install || true
 
-          # ==========================================
-          # Step B: Prepare
-          # ==========================================
-          echo "📋 Step B: Preparing..."
-          make -j4 prepare O=out
+if [ -f "out/arch/arm64/boot/Image" ]; then
+    echo "✅ BUILD SUCCESSFUL! ($(ls -lh out/arch/arm64/boot/Image | awk '{print $5}'))"
+else
+    echo "❌ BUILD FAILED!"
+    exit 1
+fi
+BUILDEOF
 
-          # ==========================================
-          # Step C: Compile
-          # ==========================================
-          echo "📋 Step C: Compiling kernel..."
-          make -j\$(nproc --all) O=out
-
-          # ==========================================
-          # Step D: Install Modules
-          # ==========================================
-          echo "📋 Step D: Installing modules..."
-          mkdir -p "\$MODULES_OUTDIR"
-          make -j\$(nproc --all) O=out \\
-              INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \\
-              INSTALL_MOD_PATH="\$MODULES_OUTDIR" \\
-              modules_install || true
-
-          # ==========================================
-          # Verify Output
-          # ==========================================
-          if [ -f "\$OUTDIR/arch/arm64/boot/Image" ]; then
-              echo ""
-              echo "============================================"
-              echo "✅ BUILD SUCCESSFUL!"
-              echo "   Image: \$OUTDIR/arch/arm64/boot/Image"
-              echo "   Size:  \$(ls -lh \$OUTDIR/arch/arm64/boot/Image | awk '{print \$5}')"
-              echo "============================================"
-          else
-              echo "❌ BUILD FAILED: Image not found!"
-              exit 1
-          fi
-          BUILDSCRIPT
+          # Insert actual defconfig command
+          sed -i "s|__DEFCONFIG_PLACEHOLDER__|${DEFCONFIG_CMD}|" build_ci.sh
 
           chmod +x build_ci.sh
-          echo "✅ Build script created"
-          echo ""
-          echo "=== build_ci.sh contents ==="
+          echo "=== build_ci.sh ==="
           cat build_ci.sh
 
       - name: 🏗️ Execute Build
         run: |
           cd "$KERNEL_SRC"
+          export PATH="${CLANG_DIR}:${BUILD_TOOLS_DIR}:${PREBUILT_DIR}:$PATH"
           ./build_ci.sh 2>&1 | tee build_full.log
 
       ########################################
