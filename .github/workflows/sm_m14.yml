@@ -1,34 +1,30 @@
-name: Build SM-M146B Kernel
-
-permissions:
-  contents: write
-  actions: write
+name: 🏗️ Build SM-M146B Kernel (s5e8535)
 
 on:
   workflow_dispatch:
     inputs:
-      release_type:
-        description: "Choose Release Type"
+      kpm:
+        description: "Enable KPM (disable RWX protections)"
         required: true
         type: choice
         options:
-          - Actions
-          - Pre-Release
-          - Release
-        default: Actions
+          - "1"
+          - "0"
+        default: "1"
 
-env:
-  BRANCH: "SM-M146B-Oneui7-ADYJ2"
-  ANDROID_VERSION: "15"
-  KERNEL_VERSION: "5.15"
-  DEVICE_NAME: "SM-M146B"
-  SOC: "s5e8535"
-  DEFCONFIG_NAME: "s5e8535-m14xnsxx_defconfig"
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: "SM-M146B | 15 | 5.15"
-    runs-on: ubuntu-latest
+    name: 🏗️ wksu SM-M146B | Exynos 1330 | Android 15 | 5.15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      BRANCH: SM-M146B-Oneui7-ADYJ2
+      KERNEL_DIR: ${{ github.workspace }}/kernel_source
+      DEFCONFIG: s5e8535-m14xnsxx_defconfig
 
     steps:
       # ==========================================
@@ -50,552 +46,178 @@ jobs:
           testing: false
 
       # ==========================================
-      # Set Config Variable
+      # Install Minimal Dependencies
       # ==========================================
-      - name: Set CONFIG Variable
+      - name: Install Build Dependencies
         run: |
-          CONFIG="${{ env.BRANCH }}-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
-          echo "CONFIG=$CONFIG" >> $GITHUB_ENV
-          echo "FILE_NAME=$CONFIG" >> $GITHUB_ENV
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc flex bison libssl-dev libelf-dev \
+            python3 python-is-python3 git curl cpio \
+            libyaml-dev libncurses-dev dwarves \
+            device-tree-compiler file zip
 
       # ==========================================
-      # Install Build Dependencies
+      # Clone Kernel Source
       # ==========================================
-      - name: Install Dependencies
-        run: |
-          sudo apt update
-          sudo apt-get install -y build-essential bc flex bison libssl-dev \
-            libelf-dev git curl python3 libyaml-dev zip cpio perl
-
-      # ==========================================
-      # Clone All Repositories
-      # ==========================================
-      - name: Clone AnyKernel3 and Dependencies
-        run: |
-          ANYKERNEL_BRANCH="gki-2.0"
-          SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
-
-          echo ">>> Cloning AnyKernel3 (branch: $ANYKERNEL_BRANCH)..."
-          git clone https://github.com/WildKernels/AnyKernel3.git -b "$ANYKERNEL_BRANCH"
-
-          echo ">>> Cloning kernel_patches..."
-          git clone https://github.com/WildKernels/kernel_patches.git
-
-          echo ">>> Cloning SUSFS (branch: $SUSFS_BRANCH)..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH"
-
-          cd susfs4ksu
-          git checkout "f20b72ca8c5214275af2cd969c58d8054a761353"
-          echo "  SUSFS commit: $(git rev-parse HEAD)"
-          cd ..
-
       - name: Clone Kernel Source
         run: |
-          echo ">>> Cloning kernel source (branch: ${{ env.BRANCH }})..."
+          echo ">>> Cloning branch: ${{ env.BRANCH }}"
           git clone --depth 1 -b ${{ env.BRANCH }} --single-branch \
-            https://github.com/WildKernels/Samsung_Kernels.git ${{ env.CONFIG }}
+            https://github.com/WildKernels/Samsung_Kernels.git \
+            ${{ env.KERNEL_DIR }}
 
       # ==========================================
-      # Set All Path Variables
+      # Extract Bundled Toolchain
       # ==========================================
-      - name: Set Path Environment Variables
+      - name: Extract Toolchain Archives (tar.xz)
         run: |
-          ROOT="$GITHUB_WORKSPACE"
-          COMMON="${{ env.CONFIG }}"
-          DEFCONFIG="$COMMON/arch/arm64/configs/${{ env.DEFCONFIG_NAME }}"
-          SUSFS4KSU="$ROOT/susfs4ksu"
-          KERNEL_PATCHES="$ROOT/kernel_patches"
-          ANYKERNEL3="$ROOT/AnyKernel3"
-
-          echo "ROOT=$ROOT" >> $GITHUB_ENV
-          echo "COMMON=$COMMON" >> $GITHUB_ENV
-          echo "DEFCONFIG=$DEFCONFIG" >> $GITHUB_ENV
-          echo "SUSFS4KSU=$SUSFS4KSU" >> $GITHUB_ENV
-          echo "KERNEL_PATCHES=$KERNEL_PATCHES" >> $GITHUB_ENV
-          echo "ANYKERNEL3=$ANYKERNEL3" >> $GITHUB_ENV
-
-          echo "=== Path Summary ==="
-          echo "  ROOT:           $ROOT"
-          echo "  COMMON:         $COMMON"
-          echo "  DEFCONFIG:      $DEFCONFIG"
-          echo "  SUSFS4KSU:      $SUSFS4KSU"
-          echo "  KERNEL_PATCHES: $KERNEL_PATCHES"
-          echo "  ANYKERNEL3:     $ANYKERNEL3"
-
-      # ==========================================
-      # Extract Toolchain Archives
-      # ==========================================
-      - name: Extract tar.xz Toolchain Archives
-        run: |
-          cd "${{ env.CONFIG }}"
-          echo ">>> Extracting toolchain archives..."
-          COUNT=0
+          cd ${{ env.KERNEL_DIR }}
+          echo ">>> Extracting bundled toolchain archives..."
           find . -type f -name '*.tar.xz' -print0 | while IFS= read -r -d '' file; do
             echo "  Extracting: $file"
             tar -xf "$file"
             rm "$file"
-            COUNT=$((COUNT + 1))
           done
-          echo "  Extracted archives successfully"
+          echo "✅ All archives extracted"
 
-      # ==========================================
-      # Add Wild_KSU (KernelSU Fork)
-      # ==========================================
-      - name: Add Wild_KSU
-        run: |
-          cd "$COMMON"
-          echo ">>> Installing Wild_KSU..."
-          curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s canary
-
-          cd Wild_KSU
-          git checkout "2f126ac00c57431d533da0a93e2d006e01a14ade"
-          echo "  Wild_KSU commit: $(git rev-parse HEAD)"
-
-      - name: Compute Wild_KSU Version
-        run: |
-          cd "$COMMON/Wild_KSU/kernel"
-
-          KSU_DIR=$(pwd)
-          KBUILD="Kbuild"
-          BASE_VERSION=30000
-
-          if [ -d "$KSU_DIR/.git" ]; then
-            echo "✔ Git repo detected"
-
-            if [ -f "$KSU_DIR/.git/shallow" ]; then
-              git -C "$KSU_DIR" fetch --unshallow || true
-            fi
-
-            KSU_GIT_VERSION=$(git -C "$KSU_DIR" rev-list --count HEAD)
-            KSU_VERSION=$((BASE_VERSION + KSU_GIT_VERSION))
-            KSU_GIT_TAG=$(git -C "$KSU_DIR" describe --tags --abbrev=0 2>/dev/null || echo "v0.0.1")
+          # Verify toolchain exists
+          if [ -d "toolchain/clang/host/linux-x86/clang-r450784d/bin" ]; then
+            echo "✅ Clang r450784d found"
+            ./toolchain/clang/host/linux-x86/clang-r450784d/bin/clang --version || true
           else
-            echo "⚠ Not a git repo, using defaults"
-            KSU_VERSION=33208
-            KSU_GIT_TAG="v3.1.2"
-          fi
-
-          echo "  KSU Version: $KSU_VERSION"
-          echo "  KSU Tag: $KSU_GIT_TAG"
-
-          echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-          echo "KSU_VERSION_TAG=$KSU_GIT_TAG" >> $GITHUB_ENV
-
-          sed -i "s/KSU_VERSION_FALLBACK := [0-9]\+/KSU_VERSION_FALLBACK := ${KSU_VERSION}/" "$KBUILD"
-          sed -i "s/KSU_VERSION_TAG_FALLBACK := .*/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" "$KBUILD"
-          echo "✅ Updated Kbuild fallback values"
-
-      # ==========================================
-      # Apply SUSFS Patches
-      # ==========================================
-      - name: Apply SUSFS Patches
-        run: |
-          cd "$COMMON"
-          echo ">>> Applying SUSFS patches..."
-
-          cp "$SUSFS4KSU/kernel_patches/fs/"* ./fs/
-          cp "$SUSFS4KSU/kernel_patches/include/linux/"* ./include/linux/
-          cp "$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch" ./
-
-          echo "  Applying SUSFS core patch..."
-          patch -p1 < "50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch" || true
-          rm -f "50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
-
-          echo "  Applying Samsung-specific fix patches..."
-          cp "$KERNEL_PATCHES/samsung/${{ env.BRANCH }}/"* ./
-
-          for p in *.patch; do
-            if [ -f "$p" ]; then
-              echo "    Applying: $p"
-              patch -p1 < "$p"
-            fi
-          done
-          echo "✅ SUSFS patches applied"
-
-      # ==========================================
-      # Add BBG (Baseband Guard)
-      # ==========================================
-      - name: Add BBG (Baseband Guard)
-        run: |
-          cd "$COMMON"
-          echo ">>> Adding BBG..."
-          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-          echo "CONFIG_BBG=y" >> arch/arm64/configs/gki_defconfig
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
-
-          if grep -qxF $'\t\tconst char* symlink_target_link = inode->i_op->get_link(dentry, inode, NULL);' ./Baseband-guard/baseband_guard.c; then
-            echo "  Applying BBG get_link fix..."
-            patch -p1 --forward < "$KERNEL_PATCHES/experimental/bbg/bbg_fix_get_link.patch"
-          fi
-          echo "✅ BBG added"
-
-      # ==========================================
-      # Set Kernel Configuration
-      # ==========================================
-      - name: Set Kernel Configuration
-        run: |
-          echo ">>> Configuring kernel defconfig..."
-          cat << 'EOF' | sed 's/^[[:space:]]*//' >> "$DEFCONFIG"
-          # KernelSU Configuration
-          CONFIG_KSU=y
-          CONFIG_KSU_SUSFS=y
-
-          # Mountify Support
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-
-          # Increase log buffer size for BBG version display
-          CONFIG_LOG_BUF_SHIFT=20
-
-          # Enable KPM
-          CONFIG_KALLSYMS=y
-          CONFIG_KALLSYMS_ALL=y
-
-          # Nuke Samsung Root Protection
-          CONFIG_UH=n
-          CONFIG_UH_RKP=n
-          CONFIG_UH_LKMAUTH=n
-          CONFIG_UH_LKM_BLOCK=n
-          CONFIG_RKP_CFP_JOPP=n
-          CONFIG_RKP_CFP=n
-          CONFIG_SECURITY_DEFEX=n
-          CONFIG_PROCA=n
-          CONFIG_FIVE=n
-
-          # Disable KDP/Knox Security
-          CONFIG_RKP=n
-          CONFIG_KDP_NS=n
-          CONFIG_KDP=n
-          CONFIG_KDP_CRED=n
-          CONFIG_TIMA=n
-          CONFIG_TZDEV=n
-          CONFIG_SEC_RESTRIC_ROOTING=n
-          CONFIG_KNOX_KAP=n
-          CONFIG_KNOX_NCM=n
-          CONFIG_SEC_UNIT=n
-          CONFIG_RKP_VIRTIO=n
-          CONFIG_SEC_KNOX_ATTESTATION=n
-          CONFIG_SEC_DM_VERITY=n
-          CONFIG_SAMSUNG_TUI=n
-          CONFIG_TEE=n
-          CONFIG_TRUSTED_FOUNDATIONS=n
-          CONFIG_S2MPU=n
-          CONFIG_RODATA_FULL_DEFAULT_ENABLED=n
-          CONFIG_DEBUG_RODATA=n
-
-          # Force Load Kernel Modules
-          CONFIG_MODULES=y
-          CONFIG_MODULE_FORCE_LOAD=y
-          CONFIG_MODULE_UNLOAD=y
-          CONFIG_MODULE_FORCE_UNLOAD=y
-          CONFIG_MODVERSIONS=y
-          CONFIG_MODULE_SRCVERSION_ALL=n
-          CONFIG_MODULE_SIG=n
-          CONFIG_MODULE_COMPRESS=n
-          CONFIG_TRIM_UNUSED_KSYMS=n
-          EOF
-
-          # Remove check_defconfig
-          cd "$COMMON"
-          sed -i 's/check_defconfig//' ./build.config.gki 2>/dev/null || true
-          echo "✅ Kernel configuration set"
-
-      # ==========================================
-      # Customize Kernel Name
-      # ==========================================
-      - name: Customize Kernel Name
-        run: |
-          cd "$COMMON"
-          echo ">>> Customizing kernel version string..."
-
-          # Add Wild suffix
-          sed -i '$s|echo "\$res"|echo "\$res-Wild"|' ./scripts/setlocalversion
-
-          # Set kernel timestamp
-          perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Sun Apr 20 04:20:00 UTC 2025"}' ./scripts/mkcompile_h
-
-          # Remove ABI exports
-          rm -rf ./android/abi_gki_protected_exports_* 2>/dev/null || true
-          perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' ./BUILD.bazel 2>/dev/null || true
-
-          echo "✅ Kernel name customized"
-
-      # ==========================================
-      # Clean Dirty Flags
-      # ==========================================
-      - name: Clean Dirty Flags
-        run: |
-          sed -i 's/-dirty//' "./$COMMON/scripts/setlocalversion"
-          echo "✅ Dirty flags removed"
-
-      # ==========================================
-      # BUILD KERNEL
-      # ==========================================
-      - name: Build Kernel
-        run: |
-          set -e
-          set -x
-          cd "${{ env.CONFIG }}"
-
-          echo ""
-          echo "============================================"
-          echo "  BUILDING KERNEL FOR ${{ env.DEVICE_NAME }}"
-          echo "  SoC: Exynos 1330 (${{ env.SOC }})"
-          echo "  Defconfig: ${{ env.DEFCONFIG_NAME }}"
-          echo "  LTO: thin | KPM: enabled"
-          echo "============================================"
-          echo ""
-
-          LTO=thin KPM=1 ./build_kernel.sh
-
-      # ==========================================
-      # Verify Build Output
-      # ==========================================
-      - name: Verify Build Output
-        run: |
-          if [ -f "${{ env.CONFIG }}/arch/arm64/boot/Image" ]; then
-            IMAGE_SIZE=$(stat -c%s "${{ env.CONFIG }}/arch/arm64/boot/Image")
-            echo "✅ Kernel Image found!"
-            echo "  Path: ${{ env.CONFIG }}/arch/arm64/boot/Image"
-            echo "  Size: $((IMAGE_SIZE / 1024 / 1024)) MB ($IMAGE_SIZE bytes)"
-          else
-            echo "❌ ERROR: Kernel Image NOT found!"
-            echo "  Expected: ${{ env.CONFIG }}/arch/arm64/boot/Image"
-            echo ""
-            echo "  Searching for Image files..."
-            find "${{ env.CONFIG }}" -name "Image*" -type f 2>/dev/null || echo "  No Image files found anywhere"
+            echo "❌ Toolchain not found!"
+            find . -path "*/clang*" -name "clang" -type f 2>/dev/null | head -5
             exit 1
           fi
 
       # ==========================================
-      # Package with AnyKernel3
+      # Fix build_kernel.sh (add -j flag)
       # ==========================================
-      - name: Prepare AnyKernel3
+      - name: Patch build_kernel.sh for parallel build
         run: |
-          echo ">>> Packaging with AnyKernel3..."
-          cp "${{ env.CONFIG }}/arch/arm64/boot/Image" "$ANYKERNEL3/Image"
-          echo "✅ Image copied to AnyKernel3"
+          cd ${{ env.KERNEL_DIR }}
+
+          # Add -j$(nproc) to the final make command so it doesn't build single-threaded
+          # The last 'make' in the script has no -j flag — fix it
+          sed -i 's/^make$/make -j$(nproc)/' build_kernel.sh
+
+          echo ">>> Patched build_kernel.sh:"
+          cat build_kernel.sh
+          echo ""
 
       # ==========================================
-      # Upload AnyKernel3 Artifact
+      # Build Kernel
       # ==========================================
-      - name: Upload AnyKernel3 Artifact
-        id: upload_ak3
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.FILE_NAME }}-AnyKernel3
-          path: ./AnyKernel3/**
-          compression-level: 9
-
-      # ==========================================
-      # Upload Raw Image Artifact
-      # ==========================================
-      - name: Upload Raw Kernel Image
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.FILE_NAME }}-Image
-          path: ${{ env.CONFIG }}/arch/arm64/boot/Image
-          compression-level: 9
-
-      # ==========================================
-      # Scan Patch Rejects (runs even on failure)
-      # ==========================================
-      - name: Scan Patch Rejects
-        if: always()
+      - name: Build Kernel
         run: |
-          REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
-          mkdir -p "$REJECTS_DIR"
+          cd ${{ env.KERNEL_DIR }}
 
-          mapfile -t REJS < <(find "${{ env.CONFIG }}" -type f -name '*.rej')
-          REJ_COUNT=${#REJS[@]}
-          echo "Found $REJ_COUNT .rej files"
-          echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
+          echo ""
+          echo "============================================"
+          echo "  Device:    SM-M146B (Galaxy M14 5G)"
+          echo "  SoC:       Exynos 1330 (s5e8535)"
+          echo "  Defconfig: ${{ env.DEFCONFIG }}"
+          echo "  KPM:       ${{ inputs.kpm }}"
+          echo "  Toolchain: clang-r450784d (bundled)"
+          echo "============================================"
+          echo ""
 
-          if [ "$REJ_COUNT" -gt 0 ]; then
-            for REJ in "${REJS[@]}"; do
-              REL="${REJ#"${{ env.CONFIG }}"/}"
-              DEST="$REJECTS_DIR/$REL"
-              mkdir -p "$(dirname "$DEST")"
-              cp "$REJ" "$DEST"
+          chmod +x build_kernel.sh
+          KPM=${{ inputs.kpm }} ./build_kernel.sh 2>&1 | tee build.log
 
-              ORIG="${REJ%.rej}"
-              if [ -f "$ORIG" ]; then
-                ORIG_DEST="$REJECTS_DIR/${REL%.rej}"
-                mkdir -p "$(dirname "$ORIG_DEST")"
-                cp "$ORIG" "$ORIG_DEST"
-              fi
-              echo "$REL" >> "$REJECTS_DIR/index.txt"
-            done
-            echo "⚠️ Patch rejects found - uploading for review"
+      # ==========================================
+      # Verify Output
+      # ==========================================
+      - name: Verify Build Output
+        run: |
+          IMAGE="${{ env.KERNEL_DIR }}/arch/arm64/boot/Image"
+
+          if [ -f "$IMAGE" ]; then
+            SIZE=$(stat -c%s "$IMAGE")
+            echo ""
+            echo "============================================"
+            echo "  ✅ BUILD SUCCESSFUL"
+            echo "  Image: $IMAGE"
+            echo "  Size:  $((SIZE / 1024 / 1024)) MB ($SIZE bytes)"
+            echo "============================================"
           else
-            echo "✅ No patch rejects"
+            echo ""
+            echo "============================================"
+            echo "  ❌ BUILD FAILED — Image not found"
+            echo "============================================"
+            echo ""
+            echo "Searching for any Image files:"
+            find ${{ env.KERNEL_DIR }} -name "Image*" -type f 2>/dev/null || echo "  None found"
+            echo ""
+            echo "=== Last 50 lines of build.log ==="
+            tail -50 ${{ env.KERNEL_DIR }}/build.log || true
+            exit 1
           fi
 
-      - name: Upload Patch Rejects
-        if: always() && env.REJ_COUNT != '0'
+      # ==========================================
+      # Collect Artifacts
+      # ==========================================
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p ${{ github.workspace }}/artifacts
+
+          # Copy kernel Image
+          cp ${{ env.KERNEL_DIR }}/arch/arm64/boot/Image \
+             ${{ github.workspace }}/artifacts/Image
+
+          # Copy build log
+          cp ${{ env.KERNEL_DIR }}/build.log \
+             ${{ github.workspace }}/artifacts/build.log || true
+
+          # Copy .config for reference
+          cp ${{ env.KERNEL_DIR }}/.config \
+             ${{ github.workspace }}/artifacts/kernel.config || true
+
+          # List DTBs if any
+          find ${{ env.KERNEL_DIR }}/arch/arm64/boot -name "*.dtb" -type f \
+            -exec cp {} ${{ github.workspace }}/artifacts/ \; 2>/dev/null || true
+
+          echo ">>> Artifacts ready:"
+          ls -lh ${{ github.workspace }}/artifacts/
+
+      # ==========================================
+      # Upload Artifacts
+      # ==========================================
+      - name: Upload Kernel Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FILE_NAME }}-Rejected-Patches
-          path: ./patch-rejects/**
+          name: SM-M146B-kernel-Image
+          path: ${{ github.workspace }}/artifacts/*
           compression-level: 9
 
       # ==========================================
       # Build Summary
       # ==========================================
-      - name: Generate Build Summary
+      - name: Build Summary
         if: always()
         run: |
-          echo "## 🔧 SM-M146B Kernel Build Summary" >> $GITHUB_STEP_SUMMARY
+          IMAGE="${{ env.KERNEL_DIR }}/arch/arm64/boot/Image"
+
+          echo "## 🏗️ SM-M146B Kernel Build" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Device** | ${{ env.DEVICE_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device** | SM-M146B (Galaxy M14 5G) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **SoC** | Exynos 1330 (s5e8535) |" >> $GITHUB_STEP_SUMMARY
           echo "| **Branch** | \`${{ env.BRANCH }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Android** | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Kernel** | ${{ env.KERNEL_VERSION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **SoC** | Exynos 1330 (${{ env.SOC }}) |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Defconfig** | \`${{ env.DEFCONFIG_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "| **KSU Version** | ${{ env.KSU_VERSION }} (${{ env.KSU_VERSION_TAG }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Defconfig** | \`${{ env.DEFCONFIG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Toolchain** | clang-r450784d (bundled) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **KPM** | ${{ inputs.kpm }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Android** | 13 (Tiramisu) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Kernel** | 5.15 |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # Build status
-          if [ -f "${{ env.CONFIG }}/arch/arm64/boot/Image" ]; then
-            echo "### ✅ Build Status: SUCCESS" >> $GITHUB_STEP_SUMMARY
+          if [ -f "$IMAGE" ]; then
+            SIZE=$(stat -c%s "$IMAGE")
+            echo "### ✅ Result: SUCCESS" >> $GITHUB_STEP_SUMMARY
+            echo "- Image size: **$((SIZE / 1024 / 1024)) MB**" >> $GITHUB_STEP_SUMMARY
           else
-            echo "### ❌ Build Status: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "### ❌ Result: FAILED" >> $GITHUB_STEP_SUMMARY
+            echo "Kernel Image was not produced." >> $GITHUB_STEP_SUMMARY
           fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Features
-          echo "### Features" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Wild KSU (KernelSU fork)" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ SUSFS v2.0.0" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ BBG (Baseband Guard)" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ KPM (Kernel Patch Module)" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Samsung security bypasses" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Component commits
-          echo "### Component Commits" >> $GITHUB_STEP_SUMMARY
-
-          if [ -d "$COMMON/Wild_KSU" ]; then
-            cd "$COMMON/Wild_KSU"
-            echo "- **Wild_KSU**: \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
-            cd "$GITHUB_WORKSPACE"
-          fi
-
-          if [ -d "$COMMON/Baseband-guard" ]; then
-            cd "$COMMON/Baseband-guard"
-            echo "- **BBG**: \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
-            cd "$GITHUB_WORKSPACE"
-          fi
-
-          if [ -d "susfs4ksu" ]; then
-            cd susfs4ksu
-            echo "- **SUSFS**: \`$(git rev-parse --short HEAD)\`" >> $GITHUB_STEP_SUMMARY
-            cd "$GITHUB_WORKSPACE"
-          fi
-
-          # Patch rejects
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "$REJ_COUNT" != "0" ] && [ -n "$REJ_COUNT" ]; then
-            echo "### ⚠️ Patch Rejects: $REJ_COUNT files" >> $GITHUB_STEP_SUMMARY
-            if [ -f "patch-rejects/index.txt" ]; then
-              while IFS= read -r line; do
-                echo "- \`$line\`" >> $GITHUB_STEP_SUMMARY
-              done < patch-rejects/index.txt
-            fi
-          else
-            echo "### ✅ No Patch Rejects" >> $GITHUB_STEP_SUMMARY
-          fi
-
-  # ============================================
-  # RELEASE JOB (Optional)
-  # ============================================
-  release:
-    runs-on: ubuntu-latest
-    if: inputs.release_type != 'Actions'
-    needs: build
-    env:
-      GH_TOKEN: ${{ github.token }}
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Generate Tag
-        run: |
-          LATEST_TAG=$(gh api repos/${{ github.repository }}/tags --jq '.[0].name' 2>/dev/null || echo "")
-          if [ -z "$LATEST_TAG" ]; then
-            LATEST_TAG="v2.0.0-r0"
-          fi
-          NEW_TAG=$(echo "$LATEST_TAG" | awk -F'-r' '{suffix=$2; if (!suffix) suffix=0; suffix++; printf "%s-r%d", $1, suffix}')
-          echo "NEW_TAG=$NEW_TAG" >> $GITHUB_ENV
-          echo "Generated tag: $NEW_TAG"
-
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: ./downloaded-artifacts
-          pattern: '*-AnyKernel3'
-
-      - name: Create Release Body
-        run: |
-          cat << 'EOF' | sed 's/^[[:space:]]*//' > release_body.md
-          ## SM-M146B Kernel | Wild KSU + SUSFS + BBG
-
-          **⚠️ IMPORTANT DISCLAIMER**
-          This software is provided for testing and educational purposes only.
-          Use at your own risk. Ensure you have proper backups before flashing.
-
-          ### Features
-          - ✅ Wild KSU Manager Support (also compatible with KernelSU-Next Manager)
-          - ✅ SUSFS v2.0.0 with inline hooks
-          - ✅ BBG (Baseband Guard) - kernel-level partition protection
-          - ✅ KPM (Kernel Patch Module) support
-          - ✅ Samsung security bypasses (UH/RKP/KDP/Knox disabled)
-
-          ### Device Info
-          - **Device**: Samsung Galaxy M14 5G (SM-M146B)
-          - **SoC**: Exynos 1330 (s5e8535)
-          - **Android**: 13 (Tiramisu)
-          - **Kernel**: 5.15
-          - **OneUI**: 7 (firmware: ADYJ2)
-
-          ### Installation
-          1. Boot into custom recovery (TWRP/OrangeFox)
-          2. Flash the AnyKernel3 zip
-          3. Reboot
-          4. Install [Wild KSU Manager](https://github.com/WildKernels/Wild_KSU) or [KernelSU-Next Manager](https://github.com/KernelSU-Next/KernelSU-Next)
-          5. Install [SUSFS Module](https://github.com/sidex15/ksu_module_susfs)
-
-          ### Links
-          - Module: https://github.com/sidex15/ksu_module_susfs
-          - WKSU Manager: https://github.com/WildKernels/Wild_KSU
-          - Next Manager: https://github.com/KernelSU-Next/KernelSU-Next
-          - BBG: https://github.com/vc-teahouse/Baseband-guard
-          EOF
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.NEW_TAG }}
-          prerelease: ${{ inputs.release_type == 'Pre-Release' }}
-          files: ""
-          name: "SM-M146B Kernel - Wild KSU + SUSFS v2.0.0"
-          body_path: release_body.md
-
-      - name: Upload Release Assets
-        run: |
-          shopt -s nullglob
-          for dir in ./downloaded-artifacts/*/; do
-            if [[ "$(basename "$dir")" == *"-AnyKernel3" ]]; then
-              artifact_name=$(basename "$dir")
-              echo "Creating ZIP: ${artifact_name}.zip"
-              cd "$dir"
-              zip -r -9 "../../${artifact_name}.zip" ./*
-              cd - > /dev/null
-              echo "Uploading: ${artifact_name}.zip"
-              gh release upload ${{ env.NEW_TAG }} "${artifact_name}.zip"
-            fi
-          done
