@@ -20,7 +20,7 @@ jobs:
       KERNEL_REPO_OWNER: MrPankaj24
       KERNEL_REPO_NAME: kernel_common_modifications
       
-      # ABI & KMI Settings (Matched perfectly to your build.sh)
+      # ABI & KMI Settings
       ABI_DEFINITION: ""
       KMI_SYMBOL_LIST_STRICT_MODE: "0"
       SKIP_ABI_CHECKS: "1"
@@ -43,12 +43,10 @@ jobs:
       DEPMOD: depmod
 
       # --- THE PATH FIX ---
-      # Mapping /root/... to the GitHub Workspace dynamically
       KERNEL_ROOT: ${{ github.workspace }}/kernel_common
       OUTDIR: ${{ github.workspace }}/kernel_common/out
       MODULES_OUTDIR: ${{ github.workspace }}/kernel_common/modules_out
       FINAL_STAGING: ${{ github.workspace }}/staging
-      # Assuming backups/modules is stored inside the kernel repo
       IN_DLKM: ${{ github.workspace }}/kernel_common/backups/modules
 
       # Cross/clang settings
@@ -64,15 +62,12 @@ jobs:
 
       - name: Clone Kernel Source & Inject SukiSU
         run: |
-          # Clone the main kernel repository
           git clone --depth=1 https://github.com/${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}.git kernel_common
           
           cd kernel_common
           
-          # Remove the empty/broken KernelSU folder if git created a placeholder
           rm -rf KernelSU
           
-          # Clone SukiSU-Ultra directly to satisfy the symlink
           echo "Cloning ReSukiSU..."
           git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           
@@ -83,12 +78,10 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y
           
-          # Add LLVM apt repo for clang-22 on Ubuntu 24.04
           curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
           echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           
           sudo apt-get update -y
-          # Installed python3-setuptools for modern Ubuntu compatibility
           sudo apt-get install -y --no-install-recommends \
             clang-22 llvm-22 lld-22 \
             build-essential make bc libncurses-dev bison flex \
@@ -117,13 +110,11 @@ jobs:
           echo "Cleaning old build artifacts..."
           rm -rf "${OUTDIR}" "${MODULES_OUTDIR}" "${FINAL_STAGING}"
           
-          # Creating identical structure to local build.sh
           mkdir -p "${OUTDIR}"
           mkdir -p "${MODULES_OUTDIR}"
           mkdir -p "${FINAL_STAGING}/lib/modules/0.0"
           mkdir -p "${IN_DLKM}"
           
-          # Failsafe in case modules.load isn't in the repo yet
           if [ ! -f "${IN_DLKM}/modules.load" ]; then
             echo "# placeholder modules.load" > "${IN_DLKM}/modules.load"
           fi
@@ -137,10 +128,7 @@ jobs:
           CONFIG_FILE=$(find . -name "custom.config" | head -n 1)
           
           if [ -n "$CONFIG_FILE" ]; then
-            # Replaces the @prisma localversion with -MrPankaj24
             sed -i 's/CONFIG_LOCALVERSION=".*/CONFIG_LOCALVERSION="-MrPankaj24"/g' "$CONFIG_FILE"
-            
-            # Replaces the pdroid hostname with mrpankaj24
             sed -i 's/#CONFIG_DEFAULT_HOSTNAME=".*/#CONFIG_DEFAULT_HOSTNAME="mrpankaj24"/g' "$CONFIG_FILE"
             
             echo "Successfully updated kernel name in $CONFIG_FILE. New values:"
@@ -160,7 +148,6 @@ jobs:
           if [ -n "$CONFIG_FILE" ]; then
             echo "su.config found at $CONFIG_FILE. Applying SUSFS configs..."
             
-            # Use sed to find any existing state (even if commented out) and force it to =y
             sed -i 's/.*CONFIG_KSU_SUSFS.*/CONFIG_KSU_SUSFS=y/g' "$CONFIG_FILE"
             sed -i 's/.*CONFIG_KSU_SUSFS_SUS_OVERLAYFS.*/CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y/g' "$CONFIG_FILE"
             sed -i 's/.*CONFIG_KSU_SUSFS_SUS_MAP.*/CONFIG_KSU_SUSFS_SUS_MAP=y/g' "$CONFIG_FILE"
@@ -188,17 +175,14 @@ jobs:
           cd "${KERNEL_ROOT}"
           
           echo "Finding configuration file..."
-          # Change "su.config" to your actual defconfig name if you are placing these directly in the defconfig
           CONFIG_FILE=$(find . -name "su.config" | head -n 1)
           
           if [ -n "$CONFIG_FILE" ]; then
             echo "Injecting CONFIG_KALLSYMS_ALL=y into $CONFIG_FILE..."
             
             if grep -q "CONFIG_KALLSYMS_ALL" "$CONFIG_FILE"; then
-              # Replace it if it's already there but set to =n or commented out
               sed -i 's/.*CONFIG_KALLSYMS_ALL.*/CONFIG_KALLSYMS_ALL=y/g' "$CONFIG_FILE"
             else
-              # Append it to the very end if it doesn't exist at all
               echo "CONFIG_KALLSYMS_ALL=y" >> "$CONFIG_FILE"
             fi
             
@@ -216,25 +200,21 @@ jobs:
           echo "Executing official BBG setup script..."
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           
+          # --- FIX 1: INJECT SAMSUNG EXYNOS PARTITIONS ---
+          echo "Patching BBG for Exynos partitions..."
+          sed -i 's/"modemst1"/"efs", "sec_efs", "cpefs", "cp_debug", "radio", "up_param", "modemst1"/g' Baseband-guard/baseband_guard.c
+          
           # Target your M14 defconfig
           DEFCONFIG_FILE="arch/arm64/configs/${DEVICE}_defconfig"
           
           if [ -f "$DEFCONFIG_FILE" ]; then
-            echo "Enabling CONFIG_BBG=y..."
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
-            
-            # Ensure the LSM string includes baseband_guard in your specific defconfig
-            sed -i 's/^CONFIG_LSM=.*/CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"/g' "$DEFCONFIG_FILE"
+            echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
             echo "Successfully injected BBG into $DEFCONFIG_FILE!"
-          else
-            echo "WARNING: Defconfig $DEFCONFIG_FILE not found."
           fi
           
-          # Apply the LSM default string update in security/Kconfig
+          # Force it into the default Kconfig just in case
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
-          
-          # [OPTIONAL FIX] If compiling fails on 5.15 with a get_link error in baseband_guard.c, remove the '#' on the next line:
-          # curl -LSs https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch | patch -p1 --forward || true
 
       - name: Step A - Generate Config
         run: |
@@ -247,6 +227,13 @@ jobs:
           
           cd "${KERNEL_ROOT}"
           make -j$(nproc --all) O="${OUTDIR}" ${DEVICE}_defconfig su.config perf.config custom.config nethunter.config 2>&1 | tee build_generate_config.log
+
+      - name: Step A.5 - Force LSM in Final Config
+        run: |
+          set -euo pipefail
+          cd "${KERNEL_ROOT}"
+          echo "Forcing baseband_guard into final .config..."
+          sed -i 's/^CONFIG_LSM=.*/CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"/g' "${OUTDIR}/.config"   
 
       - name: Step B - Prepare
         run: |
