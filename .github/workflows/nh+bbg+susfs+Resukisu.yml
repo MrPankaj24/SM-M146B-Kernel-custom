@@ -208,28 +208,33 @@ jobs:
             echo "WARNING: Configuration file not found!"
           fi    
 
-      - name: Enable Baseband Guard (BBG) Support
+      - name: Add Baseband Guard (BBG) - android13-5.15
         run: |
           set -euo pipefail
           cd "${KERNEL_ROOT}"
           
-          echo "Finding custom.config to inject Baseband Guard..."
-          CONFIG_FILE=$(find . -name "custom.config" | head -n 1)
+          echo "Executing official BBG setup script..."
+          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           
-          if [ -n "$CONFIG_FILE" ]; then
-            echo "Injecting Baseband Guard into $CONFIG_FILE..."
+          # Target your M14 defconfig
+          DEFCONFIG_FILE="arch/arm64/configs/${DEVICE}_defconfig"
+          
+          if [ -f "$DEFCONFIG_FILE" ]; then
+            echo "Enabling CONFIG_BBG=y..."
+            echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             
-            # 1. Strip out any existing CONFIG_LSM line so we don't get conflicts
-            sed -i '/^CONFIG_LSM=/d' "$CONFIG_FILE"
-            
-            # 2. Append our new BBG-enabled LSM string to the end of the file
-            echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$CONFIG_FILE"
-            
-            echo "Successfully injected BBG!"
-            grep "CONFIG_LSM" "$CONFIG_FILE"
+            # Ensure the LSM string includes baseband_guard in your specific defconfig
+            sed -i 's/^CONFIG_LSM=.*/CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"/g' "$DEFCONFIG_FILE"
+            echo "Successfully injected BBG into $DEFCONFIG_FILE!"
           else
-            echo "WARNING: custom.config not found. Could not inject BBG."
+            echo "WARNING: Defconfig $DEFCONFIG_FILE not found."
           fi
+          
+          # Apply the LSM default string update in security/Kconfig
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
+          
+          # [OPTIONAL FIX] If compiling fails on 5.15 with a get_link error in baseband_guard.c, remove the '#' on the next line:
+          # curl -LSs https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch | patch -p1 --forward || true
 
       - name: Step A - Generate Config
         run: |
