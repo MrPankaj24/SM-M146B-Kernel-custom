@@ -176,60 +176,55 @@ jobs:
             echo "WARNING: Configuration file not found!"
           fi    
 
-      - name: Patch Kconfig Source (Force Disable Strict Memory)
+      - name: Patch Kconfig Source (Nuke Strict Memory Dependencies)
         run: |
           set -euo pipefail
           cd "${KERNEL_ROOT}"
           echo "Removing hardcoded strict memory dependencies from Kconfig files..."
           
-          # This removes the 'select' commands that force these features to 'y' in arm64
-          find arch/arm64 -name "Kconfig*" -exec sed -i 's/select ARCH_HAS_STRICT_KERNEL_RWX//g' {} + || true
-          find arch/arm64 -name "Kconfig*" -exec sed -i 's/select ARCH_HAS_STRICT_MODULE_RWX//g' {} + || true
-          
-          # This ensures the default state isn't fallback 'y' across the whole tree
-          find . -name "Kconfig*" -exec sed -i 's/default y if ARCH_HAS_STRICT_KERNEL_RWX/default n/g' {} + || true
-          find . -name "Kconfig*" -exec sed -i 's/default y if ARCH_HAS_STRICT_MODULE_RWX/default n/g' {} + || true
+          # Using '/d' to completely delete the 'select' lines regardless of tabs/spaces
+          find . -type f -name "Kconfig*" -exec sed -i '/select ARCH_HAS_STRICT_KERNEL_RWX/d' {} + || true
+          find . -type f -name "Kconfig*" -exec sed -i '/select ARCH_HAS_STRICT_MODULE_RWX/d' {} + || true
+          find . -type f -name "Kconfig*" -exec sed -i '/select STRICT_KERNEL_RWX/d' {} + || true
+          find . -type f -name "Kconfig*" -exec sed -i '/select STRICT_MODULE_RWX/d' {} + || true
 
       - name: Step A - Generate Config & Force Exact Settings
         run: |
           set -euo pipefail
           export PATH=/usr/lib/llvm-22/bin:$PATH
           
-          echo "===================================================="
-          echo "1. Generating base configuration..."
-          echo "===================================================="
           cd "${KERNEL_ROOT}"
-          make -j$(nproc --all) O="${OUTDIR}" ${DEVICE}_defconfig su.config perf.config custom.config nethunter.config 2>&1 | tee build_generate_config.log
           
           echo "===================================================="
-          echo "2. Validating and locking in the changes..."
+          echo "1. Injecting properly formatted disable flags..."
           echo "===================================================="
-          make -j$(nproc --all) O="${OUTDIR}" olddefconfig 2>&1 | tee -a build_generate_config.log
+          CONFIG_FILE=$(find . -name "custom.config" | head -n 1)
           
-          echo "===================================================="
-          echo "3. Force-injecting exact RWX/RODATA strings..."
-          echo "===================================================="
-          # Strip any existing mentions to prevent duplicates
-          sed -i '/CONFIG_RODATA_FULL_DEFAULT_ENABLED/d' "${OUTDIR}/.config" || true
-          sed -i '/CONFIG_ARCH_HAS_STRICT_KERNEL_RWX/d' "${OUTDIR}/.config" || true
-          sed -i '/CONFIG_STRICT_KERNEL_RWX/d' "${OUTDIR}/.config" || true
-          sed -i '/CONFIG_ARCH_HAS_STRICT_MODULE_RWX/d' "${OUTDIR}/.config" || true
-          sed -i '/CONFIG_STRICT_MODULE_RWX/d' "${OUTDIR}/.config" || true
-          sed -i '/CONFIG_DEBUG_RODATA_TEST/d' "${OUTDIR}/.config" || true
-
-          # Brute-force append the exact strings required to the bottom of the config
-          cat << 'EOF' >> "${OUTDIR}/.config"
-          CONFIG_RODATA_FULL_DEFAULT_ENABLED=n
-          CONFIG_ARCH_HAS_STRICT_KERNEL_RWX=n
-          CONFIG_STRICT_KERNEL_RWX=n
-          CONFIG_ARCH_HAS_STRICT_MODULE_RWX=n
-          CONFIG_STRICT_MODULE_RWX=n
+          # The compiler ignores '=n'. We MUST use '# ... is not set'
+          cat << 'EOF' >> "$CONFIG_FILE"
+          
+          # Disable Strict Memory & RODATA protections properly
+          # CONFIG_RODATA_FULL_DEFAULT_ENABLED is not set
+          # CONFIG_ARCH_HAS_STRICT_KERNEL_RWX is not set
+          # CONFIG_STRICT_KERNEL_RWX is not set
+          # CONFIG_ARCH_HAS_STRICT_MODULE_RWX is not set
+          # CONFIG_STRICT_MODULE_RWX is not set
           CONFIG_DEBUG_RODATA_TEST=y
           EOF
           
           echo "===================================================="
+          echo "2. Generating base configuration..."
+          echo "===================================================="
+          make -j$(nproc --all) O="${OUTDIR}" ${DEVICE}_defconfig su.config perf.config custom.config nethunter.config 2>&1 | tee build_generate_config.log
+          
+          echo "===================================================="
+          echo "3. Validating and locking in the changes..."
+          echo "===================================================="
+          make -j$(nproc --all) O="${OUTDIR}" olddefconfig 2>&1 | tee -a build_generate_config.log
+          
+          echo "===================================================="
           echo "Final memory protection status in generated .config:"
-          tail -n 10 "${OUTDIR}/.config"
+          grep -E "RWX|RODATA" "${OUTDIR}/.config" || true
           echo "===================================================="
 
       - name: Patch Exynos MMU Source (Fix rodata_enabled)
