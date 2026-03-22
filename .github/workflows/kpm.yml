@@ -190,7 +190,7 @@ jobs:
           find . -name "Kconfig*" -exec sed -i 's/default y if ARCH_HAS_STRICT_KERNEL_RWX/default n/g' {} + || true
           find . -name "Kconfig*" -exec sed -i 's/default y if ARCH_HAS_STRICT_MODULE_RWX/default n/g' {} + || true
 
-      - name: Step A - Generate Config & Validate Disable
+      - name: Step A - Generate Config & Force Exact Settings
         run: |
           set -euo pipefail
           export PATH=/usr/lib/llvm-22/bin:$PATH
@@ -202,24 +202,34 @@ jobs:
           make -j$(nproc --all) O="${OUTDIR}" ${DEVICE}_defconfig su.config perf.config custom.config nethunter.config 2>&1 | tee build_generate_config.log
           
           echo "===================================================="
-          echo "2. Applying exact RWX and RODATA configurations..."
-          echo "===================================================="
-          ${KERNEL_ROOT}/scripts/config --file "${OUTDIR}/.config" \
-            --disable RODATA_FULL_DEFAULT_ENABLED \
-            --disable STRICT_KERNEL_RWX \
-            --disable STRICT_MODULE_RWX \
-            --disable ARCH_HAS_STRICT_KERNEL_RWX \
-            --disable ARCH_HAS_STRICT_MODULE_RWX \
-            --enable DEBUG_RODATA_TEST
-
-          echo "===================================================="
-          echo "3. Validating and locking in the changes..."
+          echo "2. Validating and locking in the changes..."
           echo "===================================================="
           make -j$(nproc --all) O="${OUTDIR}" olddefconfig 2>&1 | tee -a build_generate_config.log
           
           echo "===================================================="
+          echo "3. Force-injecting exact RWX/RODATA strings..."
+          echo "===================================================="
+          # Strip any existing mentions to prevent duplicates
+          sed -i '/CONFIG_RODATA_FULL_DEFAULT_ENABLED/d' "${OUTDIR}/.config" || true
+          sed -i '/CONFIG_ARCH_HAS_STRICT_KERNEL_RWX/d' "${OUTDIR}/.config" || true
+          sed -i '/CONFIG_STRICT_KERNEL_RWX/d' "${OUTDIR}/.config" || true
+          sed -i '/CONFIG_ARCH_HAS_STRICT_MODULE_RWX/d' "${OUTDIR}/.config" || true
+          sed -i '/CONFIG_STRICT_MODULE_RWX/d' "${OUTDIR}/.config" || true
+          sed -i '/CONFIG_DEBUG_RODATA_TEST/d' "${OUTDIR}/.config" || true
+
+          # Brute-force append the exact strings required to the bottom of the config
+          cat << 'EOF' >> "${OUTDIR}/.config"
+          CONFIG_RODATA_FULL_DEFAULT_ENABLED=n
+          CONFIG_ARCH_HAS_STRICT_KERNEL_RWX=n
+          CONFIG_STRICT_KERNEL_RWX=n
+          CONFIG_ARCH_HAS_STRICT_MODULE_RWX=n
+          CONFIG_STRICT_MODULE_RWX=n
+          CONFIG_DEBUG_RODATA_TEST=y
+          EOF
+          
+          echo "===================================================="
           echo "Final memory protection status in generated .config:"
-          grep -E "RWX|RODATA" "${OUTDIR}/.config" || true
+          tail -n 10 "${OUTDIR}/.config"
           echo "===================================================="
 
       - name: Step B - Prepare
@@ -230,7 +240,7 @@ jobs:
           cd "${KERNEL_ROOT}"
           make -j4 prepare O="${OUTDIR}" 2>&1 | tee -a build_generate_config.log
 
-      - name: Step B - Compile Kernel Image
+      - name: Step C - Compile Kernel Image
         run: |
           set -euo pipefail
           export PATH=/usr/lib/llvm-22/bin:$PATH
@@ -239,7 +249,7 @@ jobs:
           cd "${KERNEL_ROOT}"
           make -j$(nproc --all) O="${OUTDIR}" 2>&1 | tee build.log
 
-      - name: Step C - Install & Strip Modules
+      - name: Step D - Install & Strip Modules
         run: |
           set -euo pipefail
           export PATH=/usr/lib/llvm-22/bin:$PATH
