@@ -176,7 +176,21 @@ jobs:
             echo "WARNING: Configuration file not found!"
           fi    
 
-      - name: Step A - Generate Config & Force Disable Strict Memory
+      - name: Patch Kconfig Source (Force Disable Strict Memory)
+        run: |
+          set -euo pipefail
+          cd "${KERNEL_ROOT}"
+          echo "Removing hardcoded strict memory dependencies from Kconfig files..."
+          
+          # This removes the 'select' commands that force these features to 'y' in arm64
+          find arch/arm64 -name "Kconfig*" -exec sed -i 's/select ARCH_HAS_STRICT_KERNEL_RWX//g' {} + || true
+          find arch/arm64 -name "Kconfig*" -exec sed -i 's/select ARCH_HAS_STRICT_MODULE_RWX//g' {} + || true
+          
+          # This ensures the default state isn't fallback 'y' across the whole tree
+          find . -name "Kconfig*" -exec sed -i 's/default y if ARCH_HAS_STRICT_KERNEL_RWX/default n/g' {} + || true
+          find . -name "Kconfig*" -exec sed -i 's/default y if ARCH_HAS_STRICT_MODULE_RWX/default n/g' {} + || true
+
+      - name: Step A - Generate Config & Validate Disable
         run: |
           set -euo pipefail
           export PATH=/usr/lib/llvm-22/bin:$PATH
@@ -188,21 +202,19 @@ jobs:
           make -j$(nproc --all) O="${OUTDIR}" ${DEVICE}_defconfig su.config perf.config custom.config nethunter.config 2>&1 | tee build_generate_config.log
           
           echo "===================================================="
-          echo "2. Forcefully disabling Strict RWX and RODATA..."
+          echo "2. Applying exact RWX and RODATA configurations..."
           echo "===================================================="
-          # Using the kernel's native config script to force these to 'is not set'
           ${KERNEL_ROOT}/scripts/config --file "${OUTDIR}/.config" \
             --disable RODATA_FULL_DEFAULT_ENABLED \
             --disable STRICT_KERNEL_RWX \
             --disable STRICT_MODULE_RWX \
             --disable ARCH_HAS_STRICT_KERNEL_RWX \
             --disable ARCH_HAS_STRICT_MODULE_RWX \
-            --disable DEBUG_RODATA_TEST
+            --enable DEBUG_RODATA_TEST
 
           echo "===================================================="
           echo "3. Validating and locking in the changes..."
           echo "===================================================="
-          # olddefconfig ensures the manual changes are correctly applied and formatted
           make -j$(nproc --all) O="${OUTDIR}" olddefconfig 2>&1 | tee -a build_generate_config.log
           
           echo "===================================================="
