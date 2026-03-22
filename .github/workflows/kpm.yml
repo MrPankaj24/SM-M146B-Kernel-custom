@@ -238,8 +238,8 @@ jobs:
           cd "${KERNEL_ROOT}"
           echo "Patching arch/arm64/mm/mmu.c to fix undeclared variables..."
           
-          # This specifically injects the missing variables at the very top of the file
-          sed -i '1s/^/#include <linux\/types.h>\n\nbool rodata_enabled = false;\nbool rodata_full = false;\n\n/' arch/arm64/mm/mmu.c
+          # Only inject rodata_enabled, because rodata_full already exists in pageattr.c
+          sed -i '1s/^/#include <linux\/types.h>\n\nbool rodata_enabled = false;\n\n/' arch/arm64/mm/mmu.c
           
           echo "Successfully patched arch/arm64/mm/mmu.c!"
 
