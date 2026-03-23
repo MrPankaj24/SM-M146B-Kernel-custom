@@ -1,12 +1,12 @@
-name: 🏗️ SUSFS BBG RESUKISU (s5e8535 / M14 - Dynamic Clang)
+name: 🏗️ Build Kernel (s5e8535 / M14 - Dynamic Clang)
 
 on:
   workflow_dispatch:
     inputs:
       KERNEL_SOURCE:
-        description: 'Kernel Source URL'
+        description: 'Kernel Source URL (Must be the actual Linux Kernel repo!)'
         required: true
-        default: 'https://github.com/MrPankaj24/SM-M146B-Kernel-custom'
+        default: 'https://github.com/MrPankaj24/SM-M146B-Kernel-Source' # Make sure this points to the KERNEL, not the workflow
       KERNEL_BRANCH:
         description: 'Kernel Branch'
         required: true
@@ -36,9 +36,13 @@ jobs:
     timeout-minutes: 120
 
     env:
+      # --- RIGID PATH MAPPING ---
       KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
       OUTDIR: ${{ github.workspace }}/kernel_workspace/out
       MODULES_OUTDIR: ${{ github.workspace }}/kernel_workspace/modules_out
+      FINAL_STAGING: ${{ github.workspace }}/staging
+      
+      # --- KERNEL VARIABLES ---
       TARGET_SOC: s5e8535
       PLATFORM_VERSION: 15
       ANDROID_MAJOR_VERSION: v
@@ -63,8 +67,17 @@ jobs:
             lz4 zstd cpio curl wget zip unzip
 
       # ──────────────────────────────────────────────
-      # 2. Clone Kernel Source
+      # 2. Prepare Workspace & Clone Kernel
       # ──────────────────────────────────────────────
+      - name: 🧹 Prepare Workspace Directories
+        run: |
+          set -euo pipefail
+          echo "Cleaning old build artifacts..."
+          rm -rf "${KERNEL_ROOT}" "${FINAL_STAGING}"
+          
+          mkdir -p "${KERNEL_ROOT}"
+          mkdir -p "${FINAL_STAGING}/lib/modules/0.0"
+
       - name: 📥 Clone Kernel Source
         run: |
           echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
@@ -83,11 +96,9 @@ jobs:
           echo ">>> User Selected: $CHOICE"
           
           if [[ "$CHOICE" == *"AOSP"* ]]; then
-            # Extract the clang-rXXXXXX string
             CLANG_VER=$(echo "$CHOICE" | awk '{print $1}')
             echo ">>> Downloading AOSP Toolchain ($CLANG_VER)..."
             
-            # Use specific tags based on version to avoid 404s
             if [[ "$CLANG_VER" == "clang-r487747c" ]]; then
               DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/${CLANG_VER}.tar.gz"
             else
@@ -99,7 +110,6 @@ jobs:
             tar -xzf clang.tar.gz -C ${CLANG_VER}
             rm clang.tar.gz
             
-            # Export to GITHUB_ENV
             echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/${CLANG_VER}/bin" >> $GITHUB_ENV
             echo "COMPILER_CC=clang" >> $GITHUB_ENV
 
@@ -110,11 +120,9 @@ jobs:
             sudo apt-get update -y
             sudo apt-get install -y clang-22 llvm-22 lld-22
             
-            # Create symlinks
             sudo ln -sf /usr/bin/clang-22 /usr/bin/clang || true
             sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld || true
             
-            # Export to GITHUB_ENV
             echo "COMPILER_PATH=/usr/bin" >> $GITHUB_ENV
             echo "COMPILER_CC=clang-22" >> $GITHUB_ENV
 
@@ -126,7 +134,6 @@ jobs:
             chmod +x antman
             ./antman -S
             
-            # Export to GITHUB_ENV
             echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/neutron/bin" >> $GITHUB_ENV
             echo "COMPILER_CC=clang" >> $GITHUB_ENV
           fi
@@ -135,8 +142,6 @@ jobs:
         run: |
           echo ">>> Cloning kernel/prebuilts/build-tools for LD, AR, and NM..."
           git clone --depth=1 -b main https://android.googlesource.com/kernel/prebuilts/build-tools ${GITHUB_WORKSPACE}/toolchains/build-tools
-          
-          # Map to PATH for host tools
           echo "AOSP_TOOLS_PATH=${GITHUB_WORKSPACE}/toolchains/build-tools/linux-x86/bin" >> $GITHUB_ENV
 
       # ──────────────────────────────────────────────
@@ -145,6 +150,12 @@ jobs:
       - name: 🛡️ Inject ReSukiSU & Patch SUSFS
         run: |
           cd ${KERNEL_ROOT}
+          
+          if [ ! -d "drivers" ]; then
+            echo "🚨 ERROR: 'drivers/' directory not found! You cloned the wrong repo."
+            exit 1
+          fi
+
           echo ">>> Injecting ReSukiSU Setup..."
           curl -ls https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh | bash -
           
@@ -177,7 +188,6 @@ jobs:
           DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           
           if [ -f "$DEFCONFIG_FILE" ]; then
-            echo ">>> Injecting BBG and expanding log buffer..."
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
             echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
@@ -185,15 +195,14 @@ jobs:
           fi
 
       # ──────────────────────────────────────────────
-      # 5. Compile Kernel
+      # 5. Compile Kernel & Modules
       # ──────────────────────────────────────────────
-      - name: 🔨 Generate Config & Compile
+      - name: 🔨 Compile Kernel Image
         run: |
           set -euo pipefail
           cd ${KERNEL_ROOT}
           mkdir -p ${OUTDIR}
           
-          # Set combined PATH dynamically based on earlier choice
           export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
           export CC="${COMPILER_CC}"
           export LD=ld.lld
@@ -209,22 +218,38 @@ jobs:
           echo ">>> Compiling Kernel ($(nproc --all) threads)..."
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" 2>&1 | tee build.log
 
+      - name: 🧩 Compile & Strip Modules
+        run: |
+          set -euo pipefail
+          cd ${KERNEL_ROOT}
+          mkdir -p ${MODULES_OUTDIR}
+          
+          export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
+          export CC="${COMPILER_CC}"
+          export LD=ld.lld
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          
+          echo ">>> Installing and stripping modules..."
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" \
+            INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
+            INSTALL_MOD_PATH="${MODULES_OUTDIR}" \
+            modules_install 2>&1 | tee -a build.log || true
+
       # ──────────────────────────────────────────────
       # 6. Collect & Upload Artifacts
       # ──────────────────────────────────────────────
-      - name: 📦 Collect Artifacts
+      - name: 📦 Package Artifacts
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/artifacts/kernel
-          mkdir -p ${GITHUB_WORKSPACE}/artifacts/dtbs
           
+          # Copy Image
           if [ -f ${OUTDIR}/arch/arm64/boot/Image ]; then
             cp ${OUTDIR}/arch/arm64/boot/Image ${GITHUB_WORKSPACE}/artifacts/kernel/
-            echo "✅ Copied Image"
           fi
           
-          if [ -d ${OUTDIR}/arch/arm64/boot/dts/exynos ]; then
-            find ${OUTDIR}/arch/arm64/boot/dts/exynos -name "*.dtb" | xargs -I{} cp {} ${GITHUB_WORKSPACE}/artifacts/dtbs/ || true
-            echo "✅ Copied DTBs"
+          # Zip up the stripped modules like your reference workflow
+          if [ -d "${MODULES_OUTDIR}/lib" ]; then
+            tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib
           fi
 
       - name: ⬆️ Upload Kernel Package
