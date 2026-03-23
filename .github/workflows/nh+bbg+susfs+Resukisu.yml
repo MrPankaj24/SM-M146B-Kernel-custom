@@ -1,330 +1,148 @@
-name: 🏗️ Build Kernel (N BBG SUSFS all ReSukiSU s5e8535 / M14 - Clang 22)
+name: Build Samsung M14 5G Kernel (ReSukiSU + SUSFS + BBG)
 
 on:
-#  push:
-#    branches: [ main, master ]
-#  pull_request:
-#    branches: [ main, master ]
   workflow_dispatch:
-
-permissions:
-  contents: read
+    inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source URL'
+        required: true
+        default: 'https://github.com/Pankaj-1234/android_kernel_samsung_m14x' # Replace with your actual repo
+      KERNEL_BRANCH:
+        description: 'Kernel Branch'
+        required: true
+        default: 'android13-5.15'
+      DEVICE:
+        description: 'Device Codename'
+        required: true
+        default: 'm14x'
 
 jobs:
   build:
-    name: 🏗️ Build Kernel (s5e8535 / M14)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    runs-on: ubuntu-22.04
+    
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-      KERNEL_REPO_OWNER: MrPankaj24
-      KERNEL_REPO_NAME: kernel_common_modifications
+      KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
       
-      # ABI & KMI Settings
-      ABI_DEFINITION: ""
-      KMI_SYMBOL_LIST_STRICT_MODE: "0"
-      SKIP_ABI_CHECKS: "1"
-      KMI_ENFORCE: "0"
-
-      # Device & Toolchain variables
-      DEVICE: m14x
-      ARCH: arm64
-      SUBARCH: arm64
-      CC: "ccache clang-22"
-      HOSTCC: "ccache clang-22"
-      LLVM: "1"
-      LTO: thin
-      LLVM_IAS: "1"
-      TARGET_SOC: s5e8535
-      SOC_NAME: s5e8535
-      DTC_FLAGS: "-@"
-      PLATFORM_VERSION: "15"
-      ANDROID_MAJOR_VERSION: "t"
-      DEPMOD: depmod
-
-      # --- THE PATH FIX ---
-      KERNEL_ROOT: ${{ github.workspace }}/kernel_common
-      OUTDIR: ${{ github.workspace }}/kernel_common/out
-      MODULES_OUTDIR: ${{ github.workspace }}/kernel_common/modules_out
-      FINAL_STAGING: ${{ github.workspace }}/staging
-      IN_DLKM: ${{ github.workspace }}/kernel_common/backups/modules
-
-      # Cross/clang settings
-      CROSS_COMPILE: aarch64-linux-gnu-
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 5G
-
     steps:
-      - name: Checkout Workflow Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Clone Kernel Source & Inject SukiSU
+      - name: Install Build Dependencies
         run: |
-          git clone --depth=1 https://github.com/${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}.git kernel_common
-          
-          cd kernel_common
-          
-          rm -rf KernelSU
-          
-          echo "Cloning ReSukiSU..."
-          git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
-          
-          ls -la | sed -n '1,20p' || true
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc curl git zip unzip \
+          libssl-dev libelf-dev clang lld python3 flex bison \
+          software-properties-common wget cpio
 
-      - name: Setup LLVM 22 and Install Dependencies
+      - name: Clone Kernel Source
         run: |
-          set -euo pipefail
-          sudo apt-get update -y
-          
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
-          
-          sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
-            clang-22 llvm-22 lld-22 \
-            build-essential make bc libncurses-dev bison flex \
-            python3 python3-setuptools python-is-python3 git ccache rsync \
-            libssl-dev libelf-dev dwarves device-tree-compiler \
-            file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
-            lz4 zstd cpio
-            
-          mkdir -p "${CCACHE_DIR}"
-          ccache -M "${CCACHE_MAXSIZE}" || true
-          
-          sudo ln -sf /usr/bin/clang-22 /usr/bin/clang || true
-          sudo ln -sf /usr/bin/clang++-22 /usr/bin/clang++ || true
+          git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
 
-      - name: Cache Compiler Output (ccache)
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-ccache-${{ hashFiles('.github/workflows/build.yml') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-
-      - name: Prepare Workspace Directories
+      - name: Setup AOSP Clang Toolchain
         run: |
-          set -euo pipefail
-          echo "Cleaning old build artifacts..."
-          rm -rf "${OUTDIR}" "${MODULES_OUTDIR}" "${FINAL_STAGING}"
-          
-          mkdir -p "${OUTDIR}"
-          mkdir -p "${MODULES_OUTDIR}"
-          mkdir -p "${FINAL_STAGING}/lib/modules/0.0"
-          mkdir -p "${IN_DLKM}"
-          
-          if [ ! -f "${IN_DLKM}/modules.load" ]; then
-            echo "# placeholder modules.load" > "${IN_DLKM}/modules.load"
-          fi
+          cd ${KERNEL_ROOT}
+          mkdir clang
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz -O clang.tar.gz
+          tar -xf clang.tar.gz -C clang/
+          rm clang.tar.gz
+          echo "Clang downloaded and extracted."
 
-      - name: Inject Custom Kernel Name (custom.config)
+      - name: Setup ReSukiSU & SUSFS
         run: |
-          set -euo pipefail
-          cd "${KERNEL_ROOT}"
+          cd ${KERNEL_ROOT}
+          # Setup KernelSU/ReSukiSU
+          curl -ls https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh | bash -
           
-          echo "Finding custom.config to update kernel name..."
-          CONFIG_FILE=$(find . -name "custom.config" | head -n 1)
-          
-          if [ -n "$CONFIG_FILE" ]; then
-            sed -i 's/CONFIG_LOCALVERSION=".*/CONFIG_LOCALVERSION="-MrPankaj24"/g' "$CONFIG_FILE"
-            sed -i 's/#CONFIG_DEFAULT_HOSTNAME=".*/#CONFIG_DEFAULT_HOSTNAME="mrpankaj24"/g' "$CONFIG_FILE"
-            
-            echo "Successfully updated kernel name in $CONFIG_FILE. New values:"
-            grep -E "CONFIG_LOCALVERSION|CONFIG_DEFAULT_HOSTNAME" "$CONFIG_FILE"
-          else
-            echo "WARNING: custom.config not found!"
-          fi    
+          # Setup SUSFS (Assuming you have a script or patch to apply here)
+          # git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+          # cp -r susfs4ksu/kernel_patches/* ./
+          # patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
 
       - name: Enable SUSFS Features (su.config)
         run: |
           set -euo pipefail
-          cd "${KERNEL_ROOT}"
+          cd ${KERNEL_ROOT}
           
           echo "Finding su.config to enable SUSFS features..."
           CONFIG_FILE=$(find . -name "su.config" | head -n 1)
           
           if [ -n "$CONFIG_FILE" ]; then
             echo "su.config found at $CONFIG_FILE. Applying SUSFS configs..."
-            
-            sed -i 's/.*CONFIG_KSU_SUSFS.*/CONFIG_KSU_SUSFS=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SUS_OVERLAYFS.*/CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SUS_MAP.*/CONFIG_KSU_SUSFS_SUS_MAP=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SUS_PATH.*/CONFIG_KSU_SUSFS_SUS_PATH=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SUS_MOUNT.*/CONFIG_KSU_SUSFS_SUS_MOUNT=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SUS_KSTAT.*/CONFIG_KSU_SUSFS_SUS_KSTAT=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT.*/CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT.*/CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_TRY_UMOUNT.*/CONFIG_KSU_SUSFS_TRY_UMOUNT=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT.*/CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SPOOF_UNAME.*/CONFIG_KSU_SUSFS_SPOOF_UNAME=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_ENABLE_LOG.*/CONFIG_KSU_SUSFS_ENABLE_LOG=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS.*/CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG.*/CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y/g' "$CONFIG_FILE"
-            sed -i 's/.*CONFIG_KSU_SUSFS_OPEN_REDIRECT.*/CONFIG_KSU_SUSFS_OPEN_REDIRECT=y/g' "$CONFIG_FILE"
-            
+            cat >> "$CONFIG_FILE" << 'EOF'
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          EOF
             echo "Successfully enabled all SUSFS features in $CONFIG_FILE."
           else
             echo "WARNING: su.config not found! SUSFS features were not modified."
-          fi   
-
-      - name: Inject KALLSYMS_ALL for Inline Hooking
-        run: |
-          set -euo pipefail
-          cd "${KERNEL_ROOT}"
-          
-          echo "Finding configuration file..."
-          CONFIG_FILE=$(find . -name "su.config" | head -n 1)
-          
-          if [ -n "$CONFIG_FILE" ]; then
-            echo "Injecting CONFIG_KALLSYMS_ALL=y into $CONFIG_FILE..."
-            
-            if grep -q "CONFIG_KALLSYMS_ALL" "$CONFIG_FILE"; then
-              sed -i 's/.*CONFIG_KALLSYMS_ALL.*/CONFIG_KALLSYMS_ALL=y/g' "$CONFIG_FILE"
-            else
-              echo "CONFIG_KALLSYMS_ALL=y" >> "$CONFIG_FILE"
-            fi
-            
-            echo "Successfully injected!"
-            grep "CONFIG_KALLSYMS_ALL" "$CONFIG_FILE"
-          else
-            echo "WARNING: Configuration file not found!"
-          fi    
+          fi
 
       - name: Add Baseband Guard (BBG) - android13-5.15
         run: |
-          set -euo pipefail
-          cd "${KERNEL_ROOT}"
+          cd ${KERNEL_ROOT}
           
-          echo "Executing official BBG setup script..."
-          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+          # Setup BBG Source (Assuming standard integration)
+          # curl -ls https://raw.githubusercontent.com/your-bbg-repo/setup.sh | bash -
           
-          # --- FIX 1: INJECT SAMSUNG EXYNOS PARTITIONS ---
-          echo "Patching BBG for Exynos partitions..."
-          sed -i 's/"modemst1"/"efs", "sec_efs", "cpefs", "cp_debug", "radio", "up_param", "modemst1"/g' Baseband-guard/baseband_guard.c
-          
-          # Target your M14 defconfig
-          DEFCONFIG_FILE="arch/arm64/configs/${DEVICE}_defconfig"
+          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           
           if [ -f "$DEFCONFIG_FILE" ]; then
+            echo "Injecting BBG and expanding log buffer..."
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
+            echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
             echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
             echo "Successfully injected BBG into $DEFCONFIG_FILE!"
-          fi
-          
-          # Force it into the default Kconfig just in case
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig
-
-      - name: Step A - Generate Config
-        run: |
-          set -euo pipefail
-          export PATH=/usr/lib/llvm-22/bin:$PATH
-          
-          echo "===================================================="
-          echo "Configuring and Building for ${DEVICE}..."
-          echo "===================================================="
-          
-          cd "${KERNEL_ROOT}"
-          make -j$(nproc --all) O="${OUTDIR}" ${DEVICE}_defconfig su.config perf.config custom.config nethunter.config 2>&1 | tee build_generate_config.log
-
-      - name: Step A.5 - Force LSM in Final Config
-        run: |
-          set -euo pipefail
-          cd "${KERNEL_ROOT}"
-          echo "Forcing baseband_guard into final .config..."
-          sed -i 's/^CONFIG_LSM=.*/CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"/g' "${OUTDIR}/.config"   
-
-      - name: Step B - Prepare
-        run: |
-          set -euo pipefail
-          export PATH=/usr/lib/llvm-22/bin:$PATH
-          
-          cd "${KERNEL_ROOT}"
-          make -j4 prepare O="${OUTDIR}" 2>&1 | tee -a build_generate_config.log
-
-      - name: Step B - Compile Kernel Image
-        run: |
-          set -euo pipefail
-          export PATH=/usr/lib/llvm-22/bin:$PATH
-          export LD=ld.lld
-          
-          cd "${KERNEL_ROOT}"
-          make -j$(nproc --all) O="${OUTDIR}" 2>&1 | tee build.log
-
-      - name: Step C - Install & Strip Modules
-        run: |
-          set -euo pipefail
-          export PATH=/usr/lib/llvm-22/bin:$PATH
-          export LD=ld.lld
-          
-          cd "${KERNEL_ROOT}"
-          echo "Installing and stripping modules to modules_out..."
-          make -j$(nproc --all) O="${OUTDIR}" \
-            INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
-            INSTALL_MOD_PATH="${MODULES_OUTDIR}" \
-            modules_install 2>&1 | tee -a build.log || true
-
-      - name: Module Filtering & Dependency Logic
-        run: |
-          set -euo pipefail
-          
-          echo "Copying metadata for depmod..."
-          
-          find "${MODULES_OUTDIR}/lib/modules" -type f -name "modules.builtin" -exec cp {} "${FINAL_STAGING}/lib/modules/0.0/" \; || true
-          find "${MODULES_OUTDIR}/lib/modules" -type f -name "modules.order" -exec cp {} "${FINAL_STAGING}/lib/modules/0.0/" \; || true
-          
-          if [ -f "${IN_DLKM}/modules.load" ]; then
-            cp "${IN_DLKM}/modules.load" "${FINAL_STAGING}/lib/modules/0.0/modules.load"
-          fi
-
-          echo "Filtering modules based on OEM modules.load..."
-          missing_modules=""
-          
-          while read -r module; do
-            [ -z "$module" ] && continue
-            [[ "$module" =~ ^#.*$ ]] && continue
-            
-            found=$(find "${MODULES_OUTDIR}/lib/modules" -name "$module" -type f | head -n 1 || true)
-            if [ -f "$found" ]; then
-              echo "FOUND: $module -> $found"
-            else
-              missing_modules="${missing_modules} $module"
-            fi
-          done < "${IN_DLKM}/modules.load"
-
-          if [ -n "$missing_modules" ]; then
-            echo "WARNING: The following modules from modules.load were not found:$missing_modules" | tee -a build.log
-          fi
-
-      - name: Finalizing Output & Packaging
-        run: |
-          set -euo pipefail
-          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
-          
-          if [ -f "${OUTDIR}/arch/arm64/boot/Image" ]; then
-            cp "${OUTDIR}/arch/arm64/boot/Image" "${GITHUB_WORKSPACE}/artifacts/Image"
-            echo -e "\n\033[1;32m====================================================\033[0m"
-            echo -e "\033[1;32mBUILD SUCCESSFUL!\033[0m"
-            echo -e "Kernel Image copied to artifacts directory"
-            echo -e "\033[1;32m====================================================\033[0m"
           else
-            echo "WARNING: Image not found at ${OUTDIR}/arch/arm64/boot/Image"
+            echo "ERROR: Defconfig not found at $DEFCONFIG_FILE"
             exit 1
           fi
 
-          if [ -d "${MODULES_OUTDIR}/lib" ]; then
-            tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib
-          fi
-          if [ -d "${FINAL_STAGING}" ]; then
-            tar -C "${FINAL_STAGING}" -czf "${GITHUB_WORKSPACE}/artifacts/staging.tgz" .
-          fi
+      - name: Build Kernel
+        run: |
+          cd ${KERNEL_ROOT}
+          export PATH="${KERNEL_ROOT}/clang/bin:${PATH}"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          export CC=clang
+          
+          make O=out ${{ github.event.inputs.DEVICE }}_defconfig
+          make -j$(nproc --all) O=out \
+                                CC=clang \
+                                CROSS_COMPILE=aarch64-linux-gnu- \
+                                CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                                LLVM=1 LLVM_IAS=1
 
-          cp "${KERNEL_ROOT}/build.log" "${GITHUB_WORKSPACE}/artifacts/build.log" || true
-          cp "${KERNEL_ROOT}/build_generate_config.log" "${GITHUB_WORKSPACE}/artifacts/build_generate_config.log" || true
+      - name: Package with AnyKernel3
+        run: |
+          cd ${{ github.workspace }}
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
+          cp ${KERNEL_ROOT}/out/arch/arm64/boot/Image AK3/
+          cd AK3
+          
+          # Basic AK3 setup adjustments
+          sed -i "s/kernel.string=.*/kernel.string=M14-ReSukiSU-BBG/g" anykernel.sh
+          sed -i "s/device.name1=.*/device.name1=${{ github.event.inputs.DEVICE }}/g" anykernel.sh
+          
+          zip -r9 ../M14_5G_Kernel_BBG.zip *
 
-      - name: Upload Kernel Artifacts
+      - name: Upload Kernel Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: m14x-kernel-build
-          path: ${{ github.workspace }}/artifacts/*
+          name: M14_5G_Kernel_BBG
+          path: M14_5G_Kernel_BBG.zip
+
