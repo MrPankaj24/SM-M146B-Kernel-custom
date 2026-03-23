@@ -20,10 +20,6 @@ on:
           - 'clang-22 (LLVM Official APT Repo)'
           - 'clang-20 (Neutron Toolchain)'
         default: 'clang-r487747c (AOSP - Android 14 Stable)'
-      BBG_BRANCH:
-        description: 'Baseband Guard (BBG) Branch'
-        required: true
-        default: 'main'
       DEVICE:
         description: 'Device Codename'
         required: true
@@ -157,13 +153,9 @@ jobs:
           fi
 
           echo ">>> Setting up ReSukiSU..."
-          # Clean up any empty KernelSU directory at the root
           rm -rf KernelSU
-          
-          # Clone ReSukiSU directly to the root
           git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           
-          # Smart Symlink Check
           if [ -L "drivers/kernelsu" ]; then
             echo "✅ Symlink 'drivers/kernelsu' already exists."
           elif [ -d "drivers/kernelsu" ]; then
@@ -201,13 +193,38 @@ jobs:
       - name: 🔒 Inject Baseband Guard (BBG)
         run: |
           cd ${KERNEL_ROOT}
-          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           
+          echo ">>> Downloading and running BBG setup script..."
+          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+          
+          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           if [ -f "$DEFCONFIG_FILE" ]; then
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
+            # Maintain Exynos LSM string override to guarantee it loads
             echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
-            echo "✅ BBG injected into $DEFCONFIG_FILE!"
+            echo "✅ BBG configs injected into $DEFCONFIG_FILE!"
+          fi
+
+          echo ">>> Modifying security/Kconfig for BBG default LSM..."
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
+
+          echo ">>> Checking if bbg_fix_get_link patch is needed..."
+          # Find the exact location of baseband_guard.c since setup.sh might put it in different places
+          BBG_C_FILE=$(find . -name "baseband_guard.c" | head -n 1)
+          
+          if [ -n "$BBG_C_FILE" ]; then
+            # Search for the specific get_link signature that causes the compile error
+            if grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
+              echo "⚠️ Vulnerable get_link signature detected! Applying WildKernels patch..."
+              curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
+              patch -p1 --forward < bbg_fix.patch
+              echo "✅ BBG get_link patch applied successfully."
+            else
+              echo "✅ BBG get_link patch is not needed for this source code."
+            fi
+          else
+            echo "🚨 WARNING: baseband_guard.c not found! The BBG setup script may have failed."
           fi
 
       # ──────────────────────────────────────────────
@@ -258,12 +275,10 @@ jobs:
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/artifacts/kernel
           
-          # Copy Image
           if [ -f ${OUTDIR}/arch/arm64/boot/Image ]; then
             cp ${OUTDIR}/arch/arm64/boot/Image ${GITHUB_WORKSPACE}/artifacts/kernel/
           fi
           
-          # Zip up the stripped modules
           if [ -d "${MODULES_OUTDIR}/lib" ]; then
             tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib
           fi
