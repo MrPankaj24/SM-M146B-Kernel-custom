@@ -1,4 +1,4 @@
-name: Build Samsung M14 5G Kernel (ReSukiSU + SUSFS + BBG)
+name: 🏗️ SUSFS BBG RESUKISU (s5e8535 / M14 - Dynamic Clang)
 
 on:
   workflow_dispatch:
@@ -6,15 +6,20 @@ on:
       KERNEL_SOURCE:
         description: 'Kernel Source URL'
         required: true
-        default: 'https://github.com/Pankaj-1234/android_kernel_samsung_m14x'
-      USE_SPECIFIC_BRANCH:
-        description: 'Clone a specific kernel branch? (Uncheck to use default)'
-        type: boolean
-        default: true
+        default: 'https://github.com/MrPankaj24/SM-M146B-Kernel-custom'
       KERNEL_BRANCH:
-        description: 'Kernel Branch Name (if checked above)'
-        required: false
-        default: 'android13-5.15'
+        description: 'Kernel Branch'
+        required: true
+        default: 'main'
+      CLANG_VERSION:
+        description: 'Select Compiler Toolchain'
+        type: choice
+        options:
+          - 'clang-r487747c (AOSP - Android 14 Stable)'
+          - 'clang-r450784d (AOSP - Android 13 Release)'
+          - 'clang-22 (LLVM Official APT Repo)'
+          - 'clang-20 (Neutron Toolchain)'
+        default: 'clang-r487747c (AOSP - Android 14 Stable)'
       BBG_BRANCH:
         description: 'Baseband Guard (BBG) Branch'
         required: true
@@ -26,62 +31,126 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    
+    name: 🏗️ Build Kernel (${{ github.event.inputs.DEVICE }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
     env:
       KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
-      
+      OUTDIR: ${{ github.workspace }}/kernel_workspace/out
+      MODULES_OUTDIR: ${{ github.workspace }}/kernel_workspace/modules_out
+      TARGET_SOC: s5e8535
+      PLATFORM_VERSION: 15
+      ANDROID_MAJOR_VERSION: v
+      ARCH: arm64
+      SUBARCH: arm64
+
     steps:
-      - name: Checkout Repository
+      # ──────────────────────────────────────────────
+      # 1. Checkout Workflow & System Dependencies
+      # ──────────────────────────────────────────────
+      - name: 📥 Checkout Workflow Repository
         uses: actions/checkout@v4
 
-      - name: Install Build Dependencies
+      - name: 📦 Install Build Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential bc curl git zip unzip \
-          libssl-dev libelf-dev clang lld python3 flex bison \
-          software-properties-common wget cpio
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential make bc libncurses-dev bison flex \
+            python3 python3-setuptools python-is-python3 git ccache rsync \
+            libssl-dev libelf-dev dwarves device-tree-compiler \
+            file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
+            lz4 zstd cpio curl wget zip unzip
 
-      - name: Clone Kernel Source
+      # ──────────────────────────────────────────────
+      # 2. Clone Kernel Source
+      # ──────────────────────────────────────────────
+      - name: 📥 Clone Kernel Source
         run: |
-          if [ "${{ github.event.inputs.USE_SPECIFIC_BRANCH }}" == "true" ]; then
-            echo "Cloning specific branch: ${{ github.event.inputs.KERNEL_BRANCH }}"
-            git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
-          else
-            echo "Cloning default branch..."
-            git clone --depth=1 ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
-          fi
+          echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
+          git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
 
-      - name: Setup AOSP Clang Toolchain
-        run: |
-          cd ${KERNEL_ROOT}
-          mkdir clang
-          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r487747c.tar.gz -O clang.tar.gz
-          tar -xf clang.tar.gz -C clang/
-          rm clang.tar.gz
-          echo "Clang downloaded and extracted."
-
-      - name: Setup ReSukiSU & SUSFS
-        run: |
-          cd ${KERNEL_ROOT}
-          # Setup KernelSU/ReSukiSU
-          curl -ls https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh | bash -
-          
-          # Setup SUSFS (Assuming you have a script or patch to apply here)
-          # git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
-          # cp -r susfs4ksu/kernel_patches/* ./
-          # patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
-
-      - name: Enable SUSFS Features (su.config)
+      # ──────────────────────────────────────────────
+      # 3. Dynamic Toolchain Setup
+      # ──────────────────────────────────────────────
+      - name: 🔧 Setup Toolchain (${{ github.event.inputs.CLANG_VERSION }})
         run: |
           set -euo pipefail
+          mkdir -p ${GITHUB_WORKSPACE}/toolchains
+          cd ${GITHUB_WORKSPACE}/toolchains
+          
+          CHOICE="${{ github.event.inputs.CLANG_VERSION }}"
+          echo ">>> User Selected: $CHOICE"
+          
+          if [[ "$CHOICE" == *"AOSP"* ]]; then
+            # Extract the clang-rXXXXXX string
+            CLANG_VER=$(echo "$CHOICE" | awk '{print $1}')
+            echo ">>> Downloading AOSP Toolchain ($CLANG_VER)..."
+            
+            # Use specific tags based on version to avoid 404s
+            if [[ "$CLANG_VER" == "clang-r487747c" ]]; then
+              DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/${CLANG_VER}.tar.gz"
+            else
+              DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/${CLANG_VER}.tar.gz"
+            fi
+            
+            mkdir -p ${CLANG_VER}
+            curl -L "$DL_URL" -o clang.tar.gz
+            tar -xzf clang.tar.gz -C ${CLANG_VER}
+            rm clang.tar.gz
+            
+            # Export to GITHUB_ENV
+            echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/${CLANG_VER}/bin" >> $GITHUB_ENV
+            echo "COMPILER_CC=clang" >> $GITHUB_ENV
+
+          elif [[ "$CHOICE" == *"clang-22"* ]]; then
+            echo ">>> Installing Clang-22 from LLVM APT..."
+            curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+            sudo apt-get update -y
+            sudo apt-get install -y clang-22 llvm-22 lld-22
+            
+            # Create symlinks
+            sudo ln -sf /usr/bin/clang-22 /usr/bin/clang || true
+            sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld || true
+            
+            # Export to GITHUB_ENV
+            echo "COMPILER_PATH=/usr/bin" >> $GITHUB_ENV
+            echo "COMPILER_CC=clang-22" >> $GITHUB_ENV
+
+          elif [[ "$CHOICE" == *"Neutron"* ]]; then
+            echo ">>> Downloading Neutron Clang..."
+            mkdir -p neutron
+            cd neutron
+            curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+            chmod +x antman
+            ./antman -S
+            
+            # Export to GITHUB_ENV
+            echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/neutron/bin" >> $GITHUB_ENV
+            echo "COMPILER_CC=clang" >> $GITHUB_ENV
+          fi
+
+      - name: ⬇️ Download AOSP Kernel Build Tools
+        run: |
+          echo ">>> Cloning kernel/prebuilts/build-tools for LD, AR, and NM..."
+          git clone --depth=1 -b main https://android.googlesource.com/kernel/prebuilts/build-tools ${GITHUB_WORKSPACE}/toolchains/build-tools
+          
+          # Map to PATH for host tools
+          echo "AOSP_TOOLS_PATH=${GITHUB_WORKSPACE}/toolchains/build-tools/linux-x86/bin" >> $GITHUB_ENV
+
+      # ──────────────────────────────────────────────
+      # 4. Integrate Features (ReSukiSU, SUSFS, BBG)
+      # ──────────────────────────────────────────────
+      - name: 🛡️ Inject ReSukiSU & Patch SUSFS
+        run: |
           cd ${KERNEL_ROOT}
+          echo ">>> Injecting ReSukiSU Setup..."
+          curl -ls https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh | bash -
           
-          echo "Finding su.config to enable SUSFS features..."
+          echo ">>> Finding su.config to enable SUSFS features..."
           CONFIG_FILE=$(find . -name "su.config" | head -n 1)
-          
           if [ -n "$CONFIG_FILE" ]; then
-            echo "su.config found at $CONFIG_FILE. Applying SUSFS configs..."
             cat >> "$CONFIG_FILE" << 'EOF'
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
@@ -99,63 +168,68 @@ jobs:
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
           EOF
-            echo "Successfully enabled all SUSFS features in $CONFIG_FILE."
-          else
-            echo "WARNING: su.config not found! SUSFS features were not modified."
+            echo "✅ SUSFS features enabled."
           fi
 
-      - name: Add Baseband Guard (BBG)
+      - name: 🔒 Inject Baseband Guard (BBG)
         run: |
           cd ${KERNEL_ROOT}
-          
-          echo "Setting up BBG from branch: ${{ github.event.inputs.BBG_BRANCH }}"
-          # NOTE: Replace the URL below with the actual Baseband Guard repository you are using
-          # git clone --depth=1 -b ${{ github.event.inputs.BBG_BRANCH }} https://github.com/your-bbg-repo/baseband_guard.git security/baseband_guard
-          
           DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           
           if [ -f "$DEFCONFIG_FILE" ]; then
-            echo "Injecting BBG and expanding log buffer..."
+            echo ">>> Injecting BBG and expanding log buffer..."
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
             echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
-            echo "Successfully injected BBG into $DEFCONFIG_FILE!"
-          else
-            echo "ERROR: Defconfig not found at $DEFCONFIG_FILE"
-            exit 1
+            echo "✅ BBG injected into $DEFCONFIG_FILE!"
           fi
 
-      - name: Build Kernel
+      # ──────────────────────────────────────────────
+      # 5. Compile Kernel
+      # ──────────────────────────────────────────────
+      - name: 🔨 Generate Config & Compile
         run: |
+          set -euo pipefail
           cd ${KERNEL_ROOT}
-          export PATH="${KERNEL_ROOT}/clang/bin:${PATH}"
-          export ARCH=arm64
-          export SUBARCH=arm64
+          mkdir -p ${OUTDIR}
+          
+          # Set combined PATH dynamically based on earlier choice
+          export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
+          export CC="${COMPILER_CC}"
+          export LD=ld.lld
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          export CC=clang
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export LLVM=1
+          export LLVM_IAS=1
+          export DTC_FLAGS="-@"
           
-          make O=out ${{ github.event.inputs.DEVICE }}_defconfig
-          make -j$(nproc --all) O=out \
-                                CC=clang \
-                                CROSS_COMPILE=aarch64-linux-gnu- \
-                                CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                                LLVM=1 LLVM_IAS=1
+          echo ">>> Generating Base Config..."
+          make O="${OUTDIR}" CC="${CC}" ${{ github.event.inputs.DEVICE }}_defconfig su.config
+          
+          echo ">>> Compiling Kernel ($(nproc --all) threads)..."
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" 2>&1 | tee build.log
 
-      - name: Package with AnyKernel3
+      # ──────────────────────────────────────────────
+      # 6. Collect & Upload Artifacts
+      # ──────────────────────────────────────────────
+      - name: 📦 Collect Artifacts
         run: |
-          cd ${{ github.workspace }}
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
-          cp ${KERNEL_ROOT}/out/arch/arm64/boot/Image AK3/
-          cd AK3
+          mkdir -p ${GITHUB_WORKSPACE}/artifacts/kernel
+          mkdir -p ${GITHUB_WORKSPACE}/artifacts/dtbs
           
-          sed -i "s/kernel.string=.*/kernel.string=M14-ReSukiSU-BBG/g" anykernel.sh
-          sed -i "s/device.name1=.*/device.name1=${{ github.event.inputs.DEVICE }}/g" anykernel.sh
+          if [ -f ${OUTDIR}/arch/arm64/boot/Image ]; then
+            cp ${OUTDIR}/arch/arm64/boot/Image ${GITHUB_WORKSPACE}/artifacts/kernel/
+            echo "✅ Copied Image"
+          fi
           
-          zip -r9 ../M14_5G_Kernel_BBG.zip *
+          if [ -d ${OUTDIR}/arch/arm64/boot/dts/exynos ]; then
+            find ${OUTDIR}/arch/arm64/boot/dts/exynos -name "*.dtb" | xargs -I{} cp {} ${GITHUB_WORKSPACE}/artifacts/dtbs/ || true
+            echo "✅ Copied DTBs"
+          fi
 
-      - name: Upload Kernel Artifact
+      - name: ⬆️ Upload Kernel Package
         uses: actions/upload-artifact@v4
         with:
-          name: M14_5G_Kernel_BBG
-          path: M14_5G_Kernel_BBG.zip
+          name: m14-kernel-${{ github.event.inputs.CLANG_VERSION }}-build
+          path: ${{ github.workspace }}/artifacts/
+          retention-days: 7
