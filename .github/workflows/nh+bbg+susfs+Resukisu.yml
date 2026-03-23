@@ -6,11 +6,19 @@ on:
       KERNEL_SOURCE:
         description: 'Kernel Source URL'
         required: true
-        default: 'https://github.com/Pankaj-1234/android_kernel_samsung_m14x' # Replace with your actual repo
+        default: 'https://github.com/Pankaj-1234/android_kernel_samsung_m14x'
+      USE_SPECIFIC_BRANCH:
+        description: 'Clone a specific kernel branch? (Uncheck to use default)'
+        type: boolean
+        default: true
       KERNEL_BRANCH:
-        description: 'Kernel Branch'
-        required: true
+        description: 'Kernel Branch Name (if checked above)'
+        required: false
         default: 'android13-5.15'
+      BBG_BRANCH:
+        description: 'Baseband Guard (BBG) Branch'
+        required: true
+        default: 'main'
       DEVICE:
         description: 'Device Codename'
         required: true
@@ -36,7 +44,13 @@ jobs:
 
       - name: Clone Kernel Source
         run: |
-          git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
+          if [ "${{ github.event.inputs.USE_SPECIFIC_BRANCH }}" == "true" ]; then
+            echo "Cloning specific branch: ${{ github.event.inputs.KERNEL_BRANCH }}"
+            git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
+          else
+            echo "Cloning default branch..."
+            git clone --depth=1 ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
+          fi
 
       - name: Setup AOSP Clang Toolchain
         run: |
@@ -90,12 +104,13 @@ jobs:
             echo "WARNING: su.config not found! SUSFS features were not modified."
           fi
 
-      - name: Add Baseband Guard (BBG) - android13-5.15
+      - name: Add Baseband Guard (BBG)
         run: |
           cd ${KERNEL_ROOT}
           
-          # Setup BBG Source (Assuming standard integration)
-          # curl -ls https://raw.githubusercontent.com/your-bbg-repo/setup.sh | bash -
+          echo "Setting up BBG from branch: ${{ github.event.inputs.BBG_BRANCH }}"
+          # NOTE: Replace the URL below with the actual Baseband Guard repository you are using
+          # git clone --depth=1 -b ${{ github.event.inputs.BBG_BRANCH }} https://github.com/your-bbg-repo/baseband_guard.git security/baseband_guard
           
           DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           
@@ -134,7 +149,6 @@ jobs:
           cp ${KERNEL_ROOT}/out/arch/arm64/boot/Image AK3/
           cd AK3
           
-          # Basic AK3 setup adjustments
           sed -i "s/kernel.string=.*/kernel.string=M14-ReSukiSU-BBG/g" anykernel.sh
           sed -i "s/device.name1=.*/device.name1=${{ github.event.inputs.DEVICE }}/g" anykernel.sh
           
@@ -145,4 +159,3 @@ jobs:
         with:
           name: M14_5G_Kernel_BBG
           path: M14_5G_Kernel_BBG.zip
-
