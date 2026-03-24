@@ -1,4 +1,4 @@
-name: 🏗️ BBG SUSFS RESUKISU (s5e8535 / M14 - Dynamic Configs)
+name: 🏗️ BBG SUSFS RESUKISU (s5e8535 / M14 - Individual Configs)
 
 on:
   workflow_dispatch:
@@ -24,14 +24,35 @@ on:
         description: 'Device Codename'
         required: true
         default: 'm14x'
+      
+      # --- INDIVIDUAL CONFIG TOGGLES ---
+      ENABLE_SU_CONFIG:
+        description: 'Enable Generated su.config (KernelSU, SUSFS, Anti-Root Bypass)?'
+        type: boolean
+        default: true
+        
+      ENABLE_PERF_CONFIG:
+        description: 'Enable perf.config?'
+        type: boolean
+        default: true
       PERF_CONFIG_URL:
         description: 'URL for perf.config'
         required: false
         default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/perf.config'
+        
+      ENABLE_NETHUNTER_CONFIG:
+        description: 'Enable nethunter.config?'
+        type: boolean
+        default: true
       NETHUNTER_CONFIG_URL:
         description: 'URL for nethunter.config'
         required: false
         default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/nethunter.config'
+        
+      ENABLE_CUSTOM_CONFIG:
+        description: 'Enable custom.config?'
+        type: boolean
+        default: true
       CUSTOM_CONFIG_URL:
         description: 'URL for custom.config'
         required: false
@@ -122,6 +143,7 @@ jobs:
           echo "AOSP_TOOLS_PATH=${GITHUB_WORKSPACE}/toolchains/build-tools/linux-x86/bin" >> $GITHUB_ENV
 
       - name: 📝 Generate Clean su.config
+        if: github.event.inputs.ENABLE_SU_CONFIG == 'true'
         run: |
           cd ${KERNEL_ROOT}
           echo ">>> Generating new su.config with all SUSFS features forced to 'y'..."
@@ -172,14 +194,12 @@ jobs:
           CONFIG_MODULE_COMPRESS=n
           CONFIG_TRIM_UNUSED_KSYMS=n
           EOF
-          
           echo "✅ Generated arch/arm64/configs/su.config successfully!"
 
-      - name: 📥 Fetch Extra Configs (perf, nethunter, custom)
+      - name: 📥 Fetch Individual Extra Configs
         run: |
           cd ${KERNEL_ROOT}/arch/arm64/configs/
           
-          # Function to auto-convert github blob links to raw format and download
           download_config() {
             local url="$1"
             local filename="$2"
@@ -187,18 +207,20 @@ jobs:
               local raw_url=$(echo "$url" | sed 's/github.com/raw.githubusercontent.com/' | sed 's/\/blob\//\//')
               echo ">>> Downloading $filename from $raw_url..."
               curl -LSs "$raw_url" -o "$filename"
-              if [ -s "$filename" ]; then
-                echo "✅ Successfully downloaded $filename"
-              else
-                echo "🚨 ERROR: Failed to download $filename (File empty or missing)"
-                rm -f "$filename"
-              fi
             fi
           }
 
-          download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"
-          download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"
-          download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then
+            download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"
+          fi
+          
+          if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then
+            download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"
+          fi
+          
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then
+            download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
+          fi
 
       - name: 🛡️ Inject ReSukiSU
         run: |
@@ -243,12 +265,14 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          # Dynamically build the config arguments
-          CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig su.config"
+          # Always start with the base defconfig
+          CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig"
           
-          if [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
-          if [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
-          if [ -f "arch/arm64/configs/custom.config" ]; then CONFIG_ARGS="$CONFIG_ARGS custom.config"; fi
+          # Append individual configs ONLY if checked and downloaded successfully
+          if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
+          if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom.config" ]; then CONFIG_ARGS="$CONFIG_ARGS custom.config"; fi
           
           echo ">>> Generating Base Config using: make $CONFIG_ARGS"
           make O="${OUTDIR}" CC="${CC}" $CONFIG_ARGS
