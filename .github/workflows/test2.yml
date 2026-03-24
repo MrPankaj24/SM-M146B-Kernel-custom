@@ -1,10 +1,10 @@
-name: 🏗️ BBG SUSFS ROOT (s5e8535 / M14 - Universal)
+name: 🏗️ BBG TEST SUSFS ROOT (s5e8535 / M14 - Universal)
 
 on:
   workflow_dispatch:
     inputs:
       KERNEL_SOURCE:
-        description: 'Kernel Source URL'
+        description: 'Kernel Source URL (Must be the actual Linux Kernel repo!)'
         required: true
         default: 'https://github.com/MrPankaj24/kernel_common_modifications'
       KERNEL_BRANCH:
@@ -50,6 +50,20 @@ on:
         description: 'SUSFS Branch to clone (if enabled above)'
         required: false
         default: 'gki-android13-5.15'
+
+      # --- SUSFS DEVICE FIXES (.rej resolution) ---
+      ENABLE_SUSFS_DEVICE_FIXES:
+        description: 'Enable Device-Specific SUSFS Fixes (for .rej files)?'
+        type: boolean
+        default: false
+      SUSFS_DEVICE_FIXES_REPO:
+        description: 'Repo containing device fixes'
+        required: false
+        default: 'https://github.com/WildKernels/kernel_patches'
+      SUSFS_DEVICE_FIXES_PATH:
+        description: 'Path inside repo to the .patch files'
+        required: false
+        default: 'samsung/SM-M146B-Oneui7-ADYJ2'
       
       # --- INDIVIDUAL CONFIG TOGGLES ---
       ENABLE_SU_CONFIG:
@@ -226,7 +240,7 @@ jobs:
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"; fi
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"; fi
 
-      - name: 🧩 Download & Apply SUSFS Source
+      - name: 🧩 Download & Apply SUSFS Source & Fixes
         if: github.event.inputs.ENABLE_SUSFS == 'true'
         run: |
           cd ${KERNEL_ROOT}
@@ -237,20 +251,38 @@ jobs:
           cp -r susfs4ksu/kernel_patches/* ./ || true
           
           echo ">>> Automatically locating and applying SUSFS patch..."
-          # Find the main patch dynamically so it works even if you change branches
           SUSFS_PATCH=$(find susfs4ksu -name "50_add_susfs_in_*.patch" | head -n 1)
           if [ -n "$SUSFS_PATCH" ]; then
             echo "Applying: $SUSFS_PATCH"
-            patch -p1 --forward < "$SUSFS_PATCH" || echo "⚠️ Patch skipped (may already be applied)"
-          else
-            echo "🚨 WARNING: No 50_add_susfs patch found in the downloaded repository!"
+            # We use --forward so it continues even if some chunks fail (generating .rej files)
+            patch -p1 --forward < "$SUSFS_PATCH" || echo "⚠️ Some generic chunks failed, relying on device-specific fixes..."
           fi
           
-          # Optional Maco patch
           MAC_PATCH=$(find susfs4ksu -name "51_susfs_add_maco_fix_*.patch" | head -n 1)
           if [ -n "$MAC_PATCH" ]; then
             echo "Applying Maco Fix: $MAC_PATCH"
             patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
+          fi
+
+          # --- APPLY DEVICE-SPECIFIC RESOLUTION PATCHES ---
+          if [ "${{ github.event.inputs.ENABLE_SUSFS_DEVICE_FIXES }}" == "true" ]; then
+            echo ">>> Fetching device-specific SUSFS patches..."
+            git clone --depth=1 ${{ github.event.inputs.SUSFS_DEVICE_FIXES_REPO }} wild_patches
+            
+            FIX_DIR="wild_patches/${{ github.event.inputs.SUSFS_DEVICE_FIXES_PATH }}"
+            if [ -d "$FIX_DIR" ]; then
+              echo ">>> Applying patches from $FIX_DIR..."
+              for fix_patch in "$FIX_DIR"/*.patch; do
+                if [ -f "$fix_patch" ]; then
+                  echo "Applying fix: $fix_patch"
+                  patch -p1 --forward < "$fix_patch" || echo "⚠️ Fix patch had issues or was already applied."
+                fi
+              done
+            else
+              echo "🚨 WARNING: Device patch directory $FIX_DIR not found!"
+            fi
+            # Clean up the downloaded patches directory to keep workspace clean
+            rm -rf wild_patches
           fi
 
       - name: 🛡️ Inject Root Manager
