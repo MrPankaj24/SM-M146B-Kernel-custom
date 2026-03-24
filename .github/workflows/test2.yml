@@ -1,4 +1,4 @@
-name: 🏗️ BBG Test SUSFS ROOT (s5e8535 / M14 - Universal)
+name: 🏗️ BBG SUSFS ROOT (s5e8535 / M14 - Universal)
 
 on:
   workflow_dispatch:
@@ -30,13 +30,14 @@ on:
         description: 'Select Root Manager'
         type: choice
         options:
-          - 'ReSukiSU (Ultra)'
+          - 'ReSukiSU'
           - 'KernelSU-Next'
+          - 'Wild_KSU'
           - 'KernelSU (Official)'
           - 'None / Skip'
-        default: 'ReSukiSU (Ultra)'
+        default: 'ReSukiSU'
       PATCH_ROOT_MANAGER:
-        description: 'Run setup.sh? (CHECK for clean sources. UNCHECK for pre-patched sources like yours)'
+        description: 'Execute setup.sh script? (CHECK for clean untouched sources. UNCHECK for pre-patched sources like yours)'
         type: boolean
         default: false
       
@@ -159,7 +160,6 @@ jobs:
         run: |
           cd ${KERNEL_ROOT}
           echo ">>> Generating new su.config with all SUSFS features forced to 'y'..."
-          
           cat > arch/arm64/configs/su.config << 'EOF'
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
@@ -203,7 +203,6 @@ jobs:
       - name: 📥 Fetch Individual Extra Configs
         run: |
           cd ${KERNEL_ROOT}/arch/arm64/configs/
-          
           download_config() {
             local url="$1"
             local filename="$2"
@@ -213,7 +212,6 @@ jobs:
               curl -LSs "$raw_url" -o "$filename"
             fi
           }
-
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"; fi
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"; fi
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"; fi
@@ -226,36 +224,37 @@ jobs:
           RUN_PATCH="${{ github.event.inputs.PATCH_ROOT_MANAGER }}"
           
           if [[ "$MANAGER_CHOICE" == *"None"* ]]; then
-            echo ">>> Skipping Root Manager injection..."
+            echo ">>> Skipping Root Manager setup..."
           else
-            echo ">>> Setting up Root Manager: $MANAGER_CHOICE"
-            rm -rf KernelSU
-            
-            # 1. Clone the correct repository
-            if [[ "$MANAGER_CHOICE" == *"ReSukiSU"* ]]; then
-              git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
-              SETUP_URL="https://raw.githubusercontent.com/rsuntk/KernelSU/main/kernel/setup.sh"
-            elif [[ "$MANAGER_CHOICE" == *"KernelSU-Next"* ]]; then
-              git clone https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
-              SETUP_URL="https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh"
-            elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
-              git clone https://github.com/tiann/KernelSU.git KernelSU
-              SETUP_URL="https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh"
-            fi
-            
-            # 2. Maintain the symlink for pre-patched repos
-            if [ ! -L "drivers/kernelsu" ]; then
-              rm -rf drivers/kernelsu
-              ln -sf ../KernelSU drivers/kernelsu
-              echo "✅ Created symlink: drivers/kernelsu -> ../KernelSU"
-            fi
-            
-            # 3. Conditionally run the patcher script
             if [ "$RUN_PATCH" == "true" ]; then
-              echo ">>> Running kernel patch script from $SETUP_URL..."
-              curl -LSs "$SETUP_URL" | bash -
+              echo ">>> Executing script to patch Kernel for $MANAGER_CHOICE..."
+              if [[ "$MANAGER_CHOICE" == *"ReSukiSU"* ]]; then
+                curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+              elif [[ "$MANAGER_CHOICE" == *"KernelSU-Next"* ]]; then
+                curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+              elif [[ "$MANAGER_CHOICE" == *"Wild_KSU"* ]]; then
+                curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s wild
+              elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
+                curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+              fi
             else
-              echo ">>> Skipping setup.sh (Kernel tree is assumed to be pre-patched)."
+              echo ">>> Skipping patch script. Cloning $MANAGER_CHOICE directly to satisfy symlink..."
+              rm -rf KernelSU
+              if [[ "$MANAGER_CHOICE" == *"ReSukiSU"* ]]; then
+                git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+              elif [[ "$MANAGER_CHOICE" == *"KernelSU-Next"* ]]; then
+                git clone -b next https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
+              elif [[ "$MANAGER_CHOICE" == *"Wild_KSU"* ]]; then
+                git clone -b wild https://github.com/WildKernels/Wild_KSU.git KernelSU
+              elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
+                git clone https://github.com/tiann/KernelSU.git KernelSU
+              fi
+              
+              if [ ! -L "drivers/kernelsu" ]; then
+                rm -rf drivers/kernelsu
+                ln -sf ../KernelSU drivers/kernelsu
+                echo "✅ Created symlink: drivers/kernelsu -> ../KernelSU"
+              fi
             fi
           fi
 
