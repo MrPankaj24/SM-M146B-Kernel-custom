@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       KERNEL_SOURCE:
-        description: 'Kernel Source URL (Must be the actual Linux Kernel repo!)'
+        description: 'Kernel Source URL'
         required: true
         default: 'https://github.com/MrPankaj24/kernel_common_modifications'
       KERNEL_BRANCH:
@@ -21,7 +21,7 @@ on:
           - 'clang-20 (Neutron Toolchain)'
         default: 'clang-r487747c (AOSP - Android 14 Stable)'
       DEVICE:
-        description: 'Device Codename'
+        description: 'Device Codename (Used as default defconfig if custom is disabled)'
         required: true
         default: 'm14x'
 
@@ -37,35 +37,20 @@ on:
           - 'None / Skip'
         default: 'ReSukiSU'
       PATCH_ROOT_MANAGER:
-        description: 'Execute setup.sh script? (CHECK for clean untouched sources. UNCHECK for pre-patched sources)'
+        description: 'Execute setup.sh script? (CHECK for clean untouched sources)'
         type: boolean
         default: false
         
-      # --- SUSFS SOURCE PATCHING ---
-      ENABLE_SUSFS:
-        description: 'Download & Apply SUSFS Patches? (UNCHECK if your source is already patched)'
-        type: boolean
-        default: false
-      SUSFS_BRANCH:
-        description: 'SUSFS Branch to clone (if enabled above)'
-        required: false
-        default: 'gki-android13-5.15'
-
-      # --- SUSFS DEVICE FIXES (.rej resolution) ---
-      ENABLE_SUSFS_DEVICE_FIXES:
-        description: 'Enable Device-Specific SUSFS Fixes (for .rej files)?'
-        type: boolean
-        default: false
-      SUSFS_DEVICE_FIXES_REPO:
-        description: 'Repo containing device fixes'
-        required: false
-        default: 'https://github.com/WildKernels/kernel_patches'
-      SUSFS_DEVICE_FIXES_PATH:
-        description: 'Path inside repo to the .patch files'
-        required: false
-        default: 'samsung/SM-M146B-Oneui7-ADYJ2'
-      
       # --- INDIVIDUAL CONFIG TOGGLES ---
+      ENABLE_CUSTOM_DEFCONFIG:
+        description: 'Override base defconfig with Custom URL?'
+        type: boolean
+        default: false
+      CUSTOM_DEFCONFIG_URL:
+        description: 'URL for Custom Base Defconfig'
+        required: false
+        default: ''
+        
       ENABLE_SU_CONFIG:
         description: 'Enable Generated su.config (SUSFS & Anti-Root Bypass)?'
         type: boolean
@@ -224,9 +209,10 @@ jobs:
           CONFIG_TRIM_UNUSED_KSYMS=n
           EOF
 
-      - name: 📥 Fetch Individual Extra Configs
+      - name: 📥 Fetch Extra Configs & Custom Defconfig
         run: |
           cd ${KERNEL_ROOT}/arch/arm64/configs/
+          
           download_config() {
             local url="$1"
             local filename="$2"
@@ -236,53 +222,18 @@ jobs:
               curl -LSs "$raw_url" -o "$filename"
             fi
           }
-          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"; fi
-          if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"; fi
-          if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"; fi
 
-      - name: 🧩 Download & Apply SUSFS Source & Fixes
-        if: github.event.inputs.ENABLE_SUSFS == 'true'
-        run: |
-          cd ${KERNEL_ROOT}
-          echo ">>> Cloning SUSFS Source branch: ${{ github.event.inputs.SUSFS_BRANCH }}..."
-          git clone -b ${{ github.event.inputs.SUSFS_BRANCH }} https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
-          
-          echo ">>> Copying SUSFS files into kernel tree..."
-          cp -r susfs4ksu/kernel_patches/* ./ || true
-          
-          echo ">>> Automatically locating and applying SUSFS patch..."
-          SUSFS_PATCH=$(find susfs4ksu -name "50_add_susfs_in_*.patch" | head -n 1)
-          if [ -n "$SUSFS_PATCH" ]; then
-            echo "Applying: $SUSFS_PATCH"
-            # We use --forward so it continues even if some chunks fail (generating .rej files)
-            patch -p1 --forward < "$SUSFS_PATCH" || echo "⚠️ Some generic chunks failed, relying on device-specific fixes..."
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ]; then 
+            download_config "${{ github.event.inputs.CUSTOM_DEFCONFIG_URL }}" "custom_base_defconfig"
           fi
-          
-          MAC_PATCH=$(find susfs4ksu -name "51_susfs_add_maco_fix_*.patch" | head -n 1)
-          if [ -n "$MAC_PATCH" ]; then
-            echo "Applying Maco Fix: $MAC_PATCH"
-            patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then 
+            download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"
           fi
-
-          # --- APPLY DEVICE-SPECIFIC RESOLUTION PATCHES ---
-          if [ "${{ github.event.inputs.ENABLE_SUSFS_DEVICE_FIXES }}" == "true" ]; then
-            echo ">>> Fetching device-specific SUSFS patches..."
-            git clone --depth=1 ${{ github.event.inputs.SUSFS_DEVICE_FIXES_REPO }} wild_patches
-            
-            FIX_DIR="wild_patches/${{ github.event.inputs.SUSFS_DEVICE_FIXES_PATH }}"
-            if [ -d "$FIX_DIR" ]; then
-              echo ">>> Applying patches from $FIX_DIR..."
-              for fix_patch in "$FIX_DIR"/*.patch; do
-                if [ -f "$fix_patch" ]; then
-                  echo "Applying fix: $fix_patch"
-                  patch -p1 --forward < "$fix_patch" || echo "⚠️ Fix patch had issues or was already applied."
-                fi
-              done
-            else
-              echo "🚨 WARNING: Device patch directory $FIX_DIR not found!"
-            fi
-            # Clean up the downloaded patches directory to keep workspace clean
-            rm -rf wild_patches
+          if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then 
+            download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"
+          fi
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then 
+            download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
           fi
 
       - name: 🛡️ Inject Root Manager
@@ -331,7 +282,14 @@ jobs:
         run: |
           cd ${KERNEL_ROOT}
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
+          
+          # Target custom defconfig if downloaded, otherwise fallback to device defconfig
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
+             DEFCONFIG_FILE="arch/arm64/configs/custom_base_defconfig"
+          else
+             DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
+          fi
+          
           if [ -f "$DEFCONFIG_FILE" ]; then
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
@@ -360,8 +318,16 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig"
+          # Step 1: Base Configuration Logic
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
+            CONFIG_ARGS="custom_base_defconfig"
+            echo ">>> Overriding default! Using downloaded custom_base_defconfig"
+          else
+            CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig"
+            echo ">>> Using default device config: $CONFIG_ARGS"
+          fi
           
+          # Step 2: Append individual configs ONLY if checked and downloaded successfully
           if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
