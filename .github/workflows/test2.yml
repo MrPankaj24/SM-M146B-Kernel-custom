@@ -192,12 +192,17 @@ jobs:
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          
+          # Disable Scamsung anti-root protection & Broken TEE/TUI Drivers
           CONFIG_UH=n
           CONFIG_RKP=n
           CONFIG_KDP=n
           CONFIG_SECURITY_DEFEX=n
           CONFIG_PROCA=n
           CONFIG_FIVE=n
+          CONFIG_SAMSUNG_TUI=n
+          CONFIG_STUI=n
+          
           CONFIG_MODULES=y
           CONFIG_MODULE_FORCE_LOAD=y
           CONFIG_MODULE_UNLOAD=y
