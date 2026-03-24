@@ -1,4 +1,4 @@
-name: 🏗️ BBG SUSFS RESUKISU (s5e8535 / M14 - Dynamic Clang)
+name: 🏗️ BBG SUSFS RESUKISU (s5e8535 / M14 - Dynamic Configs)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       KERNEL_BRANCH:
         description: 'Kernel Branch'
         required: true
-        default: 'main'
+        default: 'basic'
       CLANG_VERSION:
         description: 'Select Compiler Toolchain'
         type: choice
@@ -24,6 +24,18 @@ on:
         description: 'Device Codename'
         required: true
         default: 'm14x'
+      PERF_CONFIG_URL:
+        description: 'URL for perf.config'
+        required: false
+        default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/perf.config'
+      NETHUNTER_CONFIG_URL:
+        description: 'URL for nethunter.config'
+        required: false
+        default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/nethunter.config'
+      CUSTOM_CONFIG_URL:
+        description: 'URL for custom.config'
+        required: false
+        default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/custom.config'
 
 jobs:
   build:
@@ -32,13 +44,10 @@ jobs:
     timeout-minutes: 120
 
     env:
-      # --- RIGID PATH MAPPING ---
       KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
       OUTDIR: ${{ github.workspace }}/kernel_workspace/out
       MODULES_OUTDIR: ${{ github.workspace }}/kernel_workspace/modules_out
       FINAL_STAGING: ${{ github.workspace }}/staging
-      
-      # --- KERNEL VARIABLES ---
       TARGET_SOC: s5e8535
       PLATFORM_VERSION: 15
       ANDROID_MAJOR_VERSION: v
@@ -46,9 +55,6 @@ jobs:
       SUBARCH: arm64
 
     steps:
-      # ──────────────────────────────────────────────
-      # 1. Checkout Workflow & System Dependencies
-      # ──────────────────────────────────────────────
       - name: 📥 Checkout Workflow Repository
         uses: actions/checkout@v4
 
@@ -62,15 +68,10 @@ jobs:
             file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
             lz4 zstd cpio curl wget zip unzip
 
-      # ──────────────────────────────────────────────
-      # 2. Prepare Workspace & Clone Kernel
-      # ──────────────────────────────────────────────
       - name: 🧹 Prepare Workspace Directories
         run: |
           set -euo pipefail
-          echo "Cleaning old build artifacts..."
           rm -rf "${KERNEL_ROOT}" "${FINAL_STAGING}"
-          
           mkdir -p "${KERNEL_ROOT}"
           mkdir -p "${FINAL_STAGING}/lib/modules/0.0"
 
@@ -79,9 +80,6 @@ jobs:
           echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
 
-      # ──────────────────────────────────────────────
-      # 3. Dynamic Toolchain Setup
-      # ──────────────────────────────────────────────
       - name: 🔧 Setup Toolchain (${{ github.event.inputs.CLANG_VERSION }})
         run: |
           set -euo pipefail
@@ -89,88 +87,56 @@ jobs:
           cd ${GITHUB_WORKSPACE}/toolchains
           
           CHOICE="${{ github.event.inputs.CLANG_VERSION }}"
-          echo ">>> User Selected: $CHOICE"
-          
           if [[ "$CHOICE" == *"AOSP"* ]]; then
             CLANG_VER=$(echo "$CHOICE" | awk '{print $1}')
-            echo ">>> Downloading AOSP Toolchain ($CLANG_VER)..."
-            
             if [[ "$CLANG_VER" == "clang-r487747c" ]]; then
               DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/${CLANG_VER}.tar.gz"
             else
               DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/${CLANG_VER}.tar.gz"
             fi
-            
             mkdir -p ${CLANG_VER}
             curl -L "$DL_URL" -o clang.tar.gz
             tar -xzf clang.tar.gz -C ${CLANG_VER}
-            rm clang.tar.gz
-            
             echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/${CLANG_VER}/bin" >> $GITHUB_ENV
             echo "COMPILER_CC=clang" >> $GITHUB_ENV
-
           elif [[ "$CHOICE" == *"clang-22"* ]]; then
-            echo ">>> Installing Clang-22 from LLVM APT..."
             curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
             echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
             sudo apt-get update -y
             sudo apt-get install -y clang-22 llvm-22 lld-22
-            
             sudo ln -sf /usr/bin/clang-22 /usr/bin/clang || true
             sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld || true
-            
             echo "COMPILER_PATH=/usr/bin" >> $GITHUB_ENV
             echo "COMPILER_CC=clang-22" >> $GITHUB_ENV
-
           elif [[ "$CHOICE" == *"Neutron"* ]]; then
-            echo ">>> Downloading Neutron Clang..."
-            mkdir -p neutron
-            cd neutron
+            mkdir -p neutron && cd neutron
             curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
-            chmod +x antman
-            ./antman -S
-            
+            chmod +x antman && ./antman -S
             echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/neutron/bin" >> $GITHUB_ENV
             echo "COMPILER_CC=clang" >> $GITHUB_ENV
           fi
 
       - name: ⬇️ Download AOSP Kernel Build Tools
         run: |
-          echo ">>> Cloning kernel/prebuilts/build-tools for LD, AR, and NM..."
           git clone --depth=1 -b main https://android.googlesource.com/kernel/prebuilts/build-tools ${GITHUB_WORKSPACE}/toolchains/build-tools
           echo "AOSP_TOOLS_PATH=${GITHUB_WORKSPACE}/toolchains/build-tools/linux-x86/bin" >> $GITHUB_ENV
 
-      # ──────────────────────────────────────────────
-      # 4. Integrate Features (ReSukiSU, SUSFS, BBG)
-      # ──────────────────────────────────────────────
-      - name: 🛡️ Inject ReSukiSU & Patch SUSFS
+      - name: 📝 Generate Clean su.config
         run: |
           cd ${KERNEL_ROOT}
+          echo ">>> Generating new su.config with all SUSFS features forced to 'y'..."
           
-          if [ ! -d "drivers" ]; then
-            echo "🚨 ERROR: 'drivers/' directory not found! You cloned the wrong repo."
-            exit 1
-          fi
+          cat > arch/arm64/configs/su.config << 'EOF'
+          #Kernel SU
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KSU_TRACEPOINT_HOOK=n
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU=y
+          CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
 
-          echo ">>> Setting up ReSukiSU..."
-          rm -rf KernelSU
-          git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
-          
-          if [ -L "drivers/kernelsu" ]; then
-            echo "✅ Symlink 'drivers/kernelsu' already exists."
-          elif [ -d "drivers/kernelsu" ]; then
-            echo "⚠️ 'drivers/kernelsu' exists as a solid directory. Replacing with symlink..."
-            rm -rf drivers/kernelsu
-            ln -sf ../KernelSU drivers/kernelsu
-          else
-            echo "🔗 Creating missing symlink: drivers/kernelsu -> ../KernelSU"
-            ln -sf ../KernelSU drivers/kernelsu
-          fi
-
-          echo ">>> Finding su.config to enable SUSFS features..."
-          CONFIG_FILE=$(find . -name "su.config" | head -n 1)
-          if [ -n "$CONFIG_FILE" ]; then
-            cat >> "$CONFIG_FILE" << 'EOF'
+          # --- SuSFS Configuration (All Forced to y) ---
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
           CONFIG_KSU_SUSFS_SUS_MAP=y
@@ -186,50 +152,82 @@ jobs:
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+
+          # Disable Scamsung anti-root protection
+          CONFIG_UH=n
+          CONFIG_RKP=n
+          CONFIG_KDP=n
+          CONFIG_SECURITY_DEFEX=n
+          CONFIG_PROCA=n
+          CONFIG_FIVE=n
+
+          #Force Load Kernel Modules
+          CONFIG_MODULES=y
+          CONFIG_MODULE_FORCE_LOAD=y
+          CONFIG_MODULE_UNLOAD=y
+          CONFIG_MODULE_FORCE_UNLOAD=y
+          CONFIG_MODVERSIONS=y
+          CONFIG_MODULE_SRCVERSION_ALL=n
+          CONFIG_MODULE_SIG=n
+          CONFIG_MODULE_COMPRESS=n
+          CONFIG_TRIM_UNUSED_KSYMS=n
           EOF
-            echo "✅ SUSFS features enabled."
+          
+          echo "✅ Generated arch/arm64/configs/su.config successfully!"
+
+      - name: 📥 Fetch Extra Configs (perf, nethunter, custom)
+        run: |
+          cd ${KERNEL_ROOT}/arch/arm64/configs/
+          
+          # Function to auto-convert github blob links to raw format and download
+          download_config() {
+            local url="$1"
+            local filename="$2"
+            if [ -n "$url" ]; then
+              local raw_url=$(echo "$url" | sed 's/github.com/raw.githubusercontent.com/' | sed 's/\/blob\//\//')
+              echo ">>> Downloading $filename from $raw_url..."
+              curl -LSs "$raw_url" -o "$filename"
+              if [ -s "$filename" ]; then
+                echo "✅ Successfully downloaded $filename"
+              else
+                echo "🚨 ERROR: Failed to download $filename (File empty or missing)"
+                rm -f "$filename"
+              fi
+            fi
+          }
+
+          download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"
+          download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"
+          download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
+
+      - name: 🛡️ Inject ReSukiSU
+        run: |
+          cd ${KERNEL_ROOT}
+          rm -rf KernelSU
+          git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+          if [ ! -L "drivers/kernelsu" ]; then
+            rm -rf drivers/kernelsu
+            ln -sf ../KernelSU drivers/kernelsu
           fi
 
       - name: 🔒 Inject Baseband Guard (BBG)
         run: |
           cd ${KERNEL_ROOT}
-          
-          echo ">>> Downloading and running BBG setup script..."
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-          
           DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
           if [ -f "$DEFCONFIG_FILE" ]; then
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
-            # Maintain Exynos LSM string override to guarantee it loads
             echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
-            echo "✅ BBG configs injected into $DEFCONFIG_FILE!"
           fi
-
-          echo ">>> Modifying security/Kconfig for BBG default LSM..."
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
-
-          echo ">>> Checking if bbg_fix_get_link patch is needed..."
-          # Find the exact location of baseband_guard.c since setup.sh might put it in different places
-          BBG_C_FILE=$(find . -name "baseband_guard.c" | head -n 1)
           
-          if [ -n "$BBG_C_FILE" ]; then
-            # Search for the specific get_link signature that causes the compile error
-            if grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
-              echo "⚠️ Vulnerable get_link signature detected! Applying WildKernels patch..."
-              curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
-              patch -p1 --forward < bbg_fix.patch
-              echo "✅ BBG get_link patch applied successfully."
-            else
-              echo "✅ BBG get_link patch is not needed for this source code."
-            fi
-          else
-            echo "🚨 WARNING: baseband_guard.c not found! The BBG setup script may have failed."
+          BBG_C_FILE=$(find . -name "baseband_guard.c" | head -n 1)
+          if [ -n "$BBG_C_FILE" ] && grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
+            curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
+            patch -p1 --forward < bbg_fix.patch
           fi
 
-      # ──────────────────────────────────────────────
-      # 5. Compile Kernel & Modules
-      # ──────────────────────────────────────────────
       - name: 🔨 Compile Kernel Image
         run: |
           set -euo pipefail
@@ -245,8 +243,15 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          echo ">>> Generating Base Config..."
-          make O="${OUTDIR}" CC="${CC}" ${{ github.event.inputs.DEVICE }}_defconfig su.config
+          # Dynamically build the config arguments
+          CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig su.config"
+          
+          if [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
+          if [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
+          if [ -f "arch/arm64/configs/custom.config" ]; then CONFIG_ARGS="$CONFIG_ARGS custom.config"; fi
+          
+          echo ">>> Generating Base Config using: make $CONFIG_ARGS"
+          make O="${OUTDIR}" CC="${CC}" $CONFIG_ARGS
           
           echo ">>> Compiling Kernel ($(nproc --all) threads)..."
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" 2>&1 | tee build.log
@@ -256,32 +261,17 @@ jobs:
           set -euo pipefail
           cd ${KERNEL_ROOT}
           mkdir -p ${MODULES_OUTDIR}
-          
           export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
           export CC="${COMPILER_CC}"
           export LD=ld.lld
           export CROSS_COMPILE=aarch64-linux-gnu-
-          
-          echo ">>> Installing and stripping modules..."
-          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" \
-            INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
-            INSTALL_MOD_PATH="${MODULES_OUTDIR}" \
-            modules_install 2>&1 | tee -a build.log || true
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
 
-      # ──────────────────────────────────────────────
-      # 6. Collect & Upload Artifacts
-      # ──────────────────────────────────────────────
       - name: 📦 Package Artifacts
         run: |
           mkdir -p ${GITHUB_WORKSPACE}/artifacts/kernel
-          
-          if [ -f ${OUTDIR}/arch/arm64/boot/Image ]; then
-            cp ${OUTDIR}/arch/arm64/boot/Image ${GITHUB_WORKSPACE}/artifacts/kernel/
-          fi
-          
-          if [ -d "${MODULES_OUTDIR}/lib" ]; then
-            tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib
-          fi
+          if [ -f ${OUTDIR}/arch/arm64/boot/Image ]; then cp ${OUTDIR}/arch/arm64/boot/Image ${GITHUB_WORKSPACE}/artifacts/kernel/; fi
+          if [ -d "${MODULES_OUTDIR}/lib" ]; then tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib; fi
 
       - name: ⬆️ Upload Kernel Package
         uses: actions/upload-artifact@v4
