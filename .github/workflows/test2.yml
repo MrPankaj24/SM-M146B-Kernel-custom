@@ -1,4 +1,4 @@
-name: 🏗️ BBG TEST SUSFS ROOT (s5e8535 / M14 - Universal)
+name: 🏗️ BBG SUSFS ROOT (s5e8535 / M14 - Universal)
 
 on:
   workflow_dispatch:
@@ -343,13 +343,11 @@ jobs:
               fi
             fi
             
-            # --- SYMLINK CREATION MOVED HERE TO ALWAYS RUN ---
-            if [ ! -L "drivers/kernelsu" ]; then
-              echo ">>> Ensuring drivers/kernelsu symlink exists..."
-              rm -rf drivers/kernelsu
-              ln -sf ../KernelSU drivers/kernelsu
-              echo "✅ Created symlink: drivers/kernelsu -> ../KernelSU"
-            fi
+            # --- THE ABSOLUTE PATH SYMLINK FIX ---
+            echo ">>> Forcefully binding KernelSU/kernel folder to drivers/kernelsu using absolute paths..."
+            rm -rf ${KERNEL_ROOT}/drivers/kernelsu
+            ln -sf ${KERNEL_ROOT}/KernelSU/kernel ${KERNEL_ROOT}/drivers/kernelsu
+            echo "✅ Created Absolute Symlink: ${KERNEL_ROOT}/drivers/kernelsu -> ${KERNEL_ROOT}/KernelSU/kernel"
           fi
 
       - name: 🔒 Inject Baseband Guard (BBG)
