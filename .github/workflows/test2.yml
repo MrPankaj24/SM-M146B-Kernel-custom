@@ -37,9 +37,19 @@ on:
           - 'None / Skip'
         default: 'ReSukiSU'
       PATCH_ROOT_MANAGER:
-        description: 'Execute setup.sh script? (CHECK for clean untouched sources. UNCHECK for pre-patched sources like yours)'
+        description: 'Execute setup.sh script? (CHECK for clean untouched sources. UNCHECK for pre-patched sources)'
         type: boolean
         default: false
+        
+      # --- SUSFS SOURCE PATCHING ---
+      ENABLE_SUSFS:
+        description: 'Download & Apply SUSFS Patches? (UNCHECK if your source is already patched)'
+        type: boolean
+        default: false
+      SUSFS_BRANCH:
+        description: 'SUSFS Branch to clone (if enabled above)'
+        required: false
+        default: 'gki-android13-5.15'
       
       # --- INDIVIDUAL CONFIG TOGGLES ---
       ENABLE_SU_CONFIG:
@@ -215,6 +225,33 @@ jobs:
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"; fi
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"; fi
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"; fi
+
+      - name: 🧩 Download & Apply SUSFS Source
+        if: github.event.inputs.ENABLE_SUSFS == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Cloning SUSFS Source branch: ${{ github.event.inputs.SUSFS_BRANCH }}..."
+          git clone -b ${{ github.event.inputs.SUSFS_BRANCH }} https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          
+          echo ">>> Copying SUSFS files into kernel tree..."
+          cp -r susfs4ksu/kernel_patches/* ./ || true
+          
+          echo ">>> Automatically locating and applying SUSFS patch..."
+          # Find the main patch dynamically so it works even if you change branches
+          SUSFS_PATCH=$(find susfs4ksu -name "50_add_susfs_in_*.patch" | head -n 1)
+          if [ -n "$SUSFS_PATCH" ]; then
+            echo "Applying: $SUSFS_PATCH"
+            patch -p1 --forward < "$SUSFS_PATCH" || echo "⚠️ Patch skipped (may already be applied)"
+          else
+            echo "🚨 WARNING: No 50_add_susfs patch found in the downloaded repository!"
+          fi
+          
+          # Optional Maco patch
+          MAC_PATCH=$(find susfs4ksu -name "51_susfs_add_maco_fix_*.patch" | head -n 1)
+          if [ -n "$MAC_PATCH" ]; then
+            echo "Applying Maco Fix: $MAC_PATCH"
+            patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
+          fi
 
       - name: 🛡️ Inject Root Manager
         run: |
