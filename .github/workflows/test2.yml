@@ -41,7 +41,7 @@ on:
         type: boolean
         default: false
         
-      # --- RESTORED: SUSFS SOURCE PATCHING ---
+      # --- SUSFS SOURCE PATCHING ---
       ENABLE_SUSFS:
         description: 'Download & Apply SUSFS Patches? (UNCHECK if your source is already patched)'
         type: boolean
@@ -51,7 +51,7 @@ on:
         required: false
         default: 'gki-android13-5.15'
 
-      # --- RESTORED: SUSFS DEVICE FIXES (.rej resolution) ---
+      # --- SUSFS DEVICE FIXES (.rej resolution) ---
       ENABLE_SUSFS_DEVICE_FIXES:
         description: 'Enable Device-Specific SUSFS Fixes (for .rej files)?'
         type: boolean
@@ -329,6 +329,7 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
               fi
+              echo "✅ Trusting the automated patcher script's folder setup."
             else
               echo ">>> Skipping patch script. Cloning $MANAGER_CHOICE directly to satisfy symlink..."
               rm -rf KernelSU
@@ -341,13 +342,13 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 git clone https://github.com/tiann/KernelSU.git KernelSU
               fi
+              
+              # ONLY CREATE SYMLINK MANUALLY IF WE SKIPPED THE PATCHER SCRIPT
+              echo ">>> Forcefully binding KernelSU/kernel folder to drivers/kernelsu using absolute paths..."
+              rm -rf ${KERNEL_ROOT}/drivers/kernelsu
+              ln -sf ${KERNEL_ROOT}/KernelSU/kernel ${KERNEL_ROOT}/drivers/kernelsu
+              echo "✅ Created Absolute Symlink: ${KERNEL_ROOT}/drivers/kernelsu -> ${KERNEL_ROOT}/KernelSU/kernel"
             fi
-            
-            # --- THE ABSOLUTE PATH SYMLINK FIX ---
-            echo ">>> Forcefully binding KernelSU/kernel folder to drivers/kernelsu using absolute paths..."
-            rm -rf ${KERNEL_ROOT}/drivers/kernelsu
-            ln -sf ${KERNEL_ROOT}/KernelSU/kernel ${KERNEL_ROOT}/drivers/kernelsu
-            echo "✅ Created Absolute Symlink: ${KERNEL_ROOT}/drivers/kernelsu -> ${KERNEL_ROOT}/KernelSU/kernel"
           fi
 
       - name: 🔒 Inject Baseband Guard (BBG)
