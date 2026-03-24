@@ -1,4 +1,4 @@
-name: 🏗️ BBG SUSFS ROOT (s5e8535 / M14 - Universal)
+name: 🏗️ BBG TEST SUSFS ROOT (s5e8535 / M14 - Universal)
 
 on:
   workflow_dispatch:
@@ -265,7 +265,6 @@ jobs:
             download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
           fi
 
-      # --- RESTORED: SUSFS DOWNLOADING & PATCHING STEP ---
       - name: 🧩 Download & Apply SUSFS Source & Fixes
         if: github.event.inputs.ENABLE_SUSFS == 'true'
         run: |
@@ -342,12 +341,14 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 git clone https://github.com/tiann/KernelSU.git KernelSU
               fi
-              
-              if [ ! -L "drivers/kernelsu" ]; then
-                rm -rf drivers/kernelsu
-                ln -sf ../KernelSU drivers/kernelsu
-                echo "✅ Created symlink: drivers/kernelsu -> ../KernelSU"
-              fi
+            fi
+            
+            # --- SYMLINK CREATION MOVED HERE TO ALWAYS RUN ---
+            if [ ! -L "drivers/kernelsu" ]; then
+              echo ">>> Ensuring drivers/kernelsu symlink exists..."
+              rm -rf drivers/kernelsu
+              ln -sf ../KernelSU drivers/kernelsu
+              echo "✅ Created symlink: drivers/kernelsu -> ../KernelSU"
             fi
           fi
 
