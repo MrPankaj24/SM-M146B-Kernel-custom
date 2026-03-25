@@ -15,6 +15,7 @@ on:
         description: 'Select Compiler Toolchain'
         type: choice
         options:
+          - 'WildKernels (SM-M146B-Oneui7-ADYJ2)'
           - 'clang-r487747c (AOSP - Android 14 Stable)'
           - 'clang-r450784d (AOSP - Android 13 Release)'
           - 'clang-22 (LLVM Official APT Repo)'
@@ -26,8 +27,8 @@ on:
         default: 'm14x'
 
       # --- COMPILER ERROR FIXES ---
-      DISABLE_UNUSED_WARNINGS:
-        description: 'Fix unused variable compiler crash (-Wno-unused-variable)?'
+      DISABLE_STRICT_WARNINGS:
+        description: 'Bypass strict compiler crashes (-Wno-unused-variable, -Wno-implicit-int)?'
         type: boolean
         default: true
 
@@ -160,7 +161,27 @@ jobs:
           cd ${GITHUB_WORKSPACE}/toolchains
           
           CHOICE="${{ github.event.inputs.CLANG_VERSION }}"
-          if [[ "$CHOICE" == *"AOSP"* ]]; then
+          
+          # --- NEW WILDKERNELS DYNAMIC TOOLCHAIN SCANNER ---
+          if [[ "$CHOICE" == *"WildKernels"* ]]; then
+            echo ">>> Cloning WildKernels Repository for Toolchain..."
+            git clone --depth=1 -b SM-M146B-Oneui7-ADYJ2 https://github.com/WildKernels/Samsung_Kernels.git wild_repo
+            
+            echo ">>> Hunting for clang binary..."
+            CLANG_BIN_PATH=$(find wild_repo -type f -name "clang" -executable | head -n 1)
+            
+            if [ -n "$CLANG_BIN_PATH" ]; then
+              COMPILER_DIR=$(dirname "$CLANG_BIN_PATH")
+              ABS_COMPILER_DIR=$(realpath "$COMPILER_DIR")
+              echo "COMPILER_PATH=${ABS_COMPILER_DIR}" >> $GITHUB_ENV
+              echo "COMPILER_CC=clang" >> $GITHUB_ENV
+              echo "✅ Found custom clang at: $ABS_COMPILER_DIR"
+            else
+              echo "🚨 ERROR: Could not find 'clang' binary inside the WildKernels repo!"
+              exit 1
+            fi
+            
+          elif [[ "$CHOICE" == *"AOSP"* ]]; then
             CLANG_VER=$(echo "$CHOICE" | awk '{print $1}')
             if [[ "$CLANG_VER" == "clang-r487747c" ]]; then
               DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/${CLANG_VER}.tar.gz"
@@ -406,10 +427,10 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          # --- INJECT COMPILER WARNING BYPASS ---
-          if [ "${{ github.event.inputs.DISABLE_UNUSED_WARNINGS }}" == "true" ]; then
-            export KCFLAGS="-Wno-unused-variable"
-            echo ">>> 🛡️ Compiler Fix: Bypassing unused variable errors (-Wno-unused-variable)"
+          # --- INJECT COMPILER WARNING BYPASSES ---
+          if [ "${{ github.event.inputs.DISABLE_STRICT_WARNINGS }}" == "true" ]; then
+            export KCFLAGS="-Wno-unused-variable -Wno-implicit-int"
+            echo ">>> 🛡️ Compiler Fix: Bypassing strict warnings (-Wno-unused-variable, -Wno-implicit-int)"
           fi
           
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
@@ -441,9 +462,9 @@ jobs:
           export LD=ld.lld
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          # --- INJECT COMPILER WARNING BYPASS ---
-          if [ "${{ github.event.inputs.DISABLE_UNUSED_WARNINGS }}" == "true" ]; then
-            export KCFLAGS="-Wno-unused-variable"
+          # --- INJECT COMPILER WARNING BYPASSES ---
+          if [ "${{ github.event.inputs.DISABLE_STRICT_WARNINGS }}" == "true" ]; then
+            export KCFLAGS="-Wno-unused-variable -Wno-implicit-int"
           fi
           
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
