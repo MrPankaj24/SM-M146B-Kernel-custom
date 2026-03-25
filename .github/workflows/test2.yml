@@ -328,6 +328,7 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
               fi
+              echo "✅ Patcher script finished. Trusting script's folder setup completely!"
             else
               echo ">>> Skipping patch script. Cloning $MANAGER_CHOICE directly..."
               rm -rf KernelSU
@@ -340,22 +341,17 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 git clone https://github.com/tiann/KernelSU.git KernelSU
               fi
-            fi
-            
-            # --- THE PHYSICAL COPY FIX (No more fragile symlinks!) ---
-            echo ">>> Physically copying KernelSU files to drivers/kernelsu..."
-            rm -rf drivers/kernelsu
-            mkdir -p drivers/kernelsu
-            
-            if [ -d "KernelSU/kernel" ]; then
-              cp -r KernelSU/kernel/* drivers/kernelsu/
-              echo "✅ Successfully copied KernelSU/kernel directly into drivers/kernelsu!"
-            elif [ -d "KernelSU" ]; then
-              cp -r KernelSU/* drivers/kernelsu/
-              echo "✅ Successfully copied KernelSU directly into drivers/kernelsu!"
-            else
-              echo "🚨 ERROR: Root Manager source not found after cloning!"
-              exit 1
+              
+              echo ">>> Physically copying KernelSU files to drivers/kernelsu..."
+              rm -rf drivers/kernelsu
+              mkdir -p drivers/kernelsu
+              
+              if [ -d "KernelSU/kernel" ]; then
+                cp -r KernelSU/kernel/* drivers/kernelsu/
+              else
+                cp -r KernelSU/* drivers/kernelsu/
+              fi
+              echo "✅ Successfully completed manual copy fallback!"
             fi
           fi
 
