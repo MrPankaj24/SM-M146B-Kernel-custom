@@ -288,7 +288,6 @@ jobs:
             patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
           fi
 
-          # APPLY DEVICE-SPECIFIC RESOLUTION PATCHES
           if [ "${{ github.event.inputs.ENABLE_SUSFS_DEVICE_FIXES }}" == "true" ]; then
             echo ">>> Fetching device-specific SUSFS patches..."
             git clone --depth=1 ${{ github.event.inputs.SUSFS_DEVICE_FIXES_REPO }} wild_patches
@@ -329,9 +328,8 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
               fi
-              echo "✅ Trusting the automated patcher script's folder setup."
             else
-              echo ">>> Skipping patch script. Cloning $MANAGER_CHOICE directly to satisfy symlink..."
+              echo ">>> Skipping patch script. Cloning $MANAGER_CHOICE directly..."
               rm -rf KernelSU
               if [[ "$MANAGER_CHOICE" == *"ReSukiSU"* ]]; then
                 git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
@@ -342,12 +340,22 @@ jobs:
               elif [[ "$MANAGER_CHOICE" == *"KernelSU (Official)"* ]]; then
                 git clone https://github.com/tiann/KernelSU.git KernelSU
               fi
-              
-              # ONLY CREATE SYMLINK MANUALLY IF WE SKIPPED THE PATCHER SCRIPT
-              echo ">>> Forcefully binding KernelSU/kernel folder to drivers/kernelsu using absolute paths..."
-              rm -rf ${KERNEL_ROOT}/drivers/kernelsu
-              ln -sf ${KERNEL_ROOT}/KernelSU/kernel ${KERNEL_ROOT}/drivers/kernelsu
-              echo "✅ Created Absolute Symlink: ${KERNEL_ROOT}/drivers/kernelsu -> ${KERNEL_ROOT}/KernelSU/kernel"
+            fi
+            
+            # --- THE PHYSICAL COPY FIX (No more fragile symlinks!) ---
+            echo ">>> Physically copying KernelSU files to drivers/kernelsu..."
+            rm -rf drivers/kernelsu
+            mkdir -p drivers/kernelsu
+            
+            if [ -d "KernelSU/kernel" ]; then
+              cp -r KernelSU/kernel/* drivers/kernelsu/
+              echo "✅ Successfully copied KernelSU/kernel directly into drivers/kernelsu!"
+            elif [ -d "KernelSU" ]; then
+              cp -r KernelSU/* drivers/kernelsu/
+              echo "✅ Successfully copied KernelSU directly into drivers/kernelsu!"
+            else
+              echo "🚨 ERROR: Root Manager source not found after cloning!"
+              exit 1
             fi
           fi
 
@@ -356,7 +364,6 @@ jobs:
           cd ${KERNEL_ROOT}
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           
-          # Target custom defconfig if downloaded, otherwise fallback to device defconfig
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
              DEFCONFIG_FILE="arch/arm64/configs/custom_base_defconfig"
           else
@@ -391,7 +398,6 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          # Step 1: Base Configuration Logic
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
             CONFIG_ARGS="custom_base_defconfig"
             echo ">>> Overriding default! Using downloaded custom_base_defconfig"
@@ -400,7 +406,6 @@ jobs:
             echo ">>> Using default device config: $CONFIG_ARGS"
           fi
           
-          # Step 2: Append individual configs ONLY if checked and downloaded successfully
           if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
