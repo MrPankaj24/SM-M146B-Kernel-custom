@@ -25,6 +25,12 @@ on:
         required: true
         default: 'm14x'
 
+      # --- COMPILER ERROR FIXES ---
+      DISABLE_UNUSED_WARNINGS:
+        description: 'Fix unused variable compiler crash (-Wno-unused-variable)?'
+        type: boolean
+        default: true
+
       # --- ROOT MANAGER TOGGLES ---
       ROOT_MANAGER:
         description: 'Select Root Manager'
@@ -394,6 +400,12 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
+          # --- INJECT COMPILER WARNING BYPASS ---
+          if [ "${{ github.event.inputs.DISABLE_UNUSED_WARNINGS }}" == "true" ]; then
+            export KCFLAGS="-Wno-unused-variable"
+            echo ">>> 🛡️ Compiler Fix: Bypassing unused variable errors (-Wno-unused-variable)"
+          fi
+          
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
             CONFIG_ARGS="custom_base_defconfig"
             echo ">>> Overriding default! Using downloaded custom_base_defconfig"
@@ -422,6 +434,12 @@ jobs:
           export CC="${COMPILER_CC}"
           export LD=ld.lld
           export CROSS_COMPILE=aarch64-linux-gnu-
+          
+          # --- INJECT COMPILER WARNING BYPASS ---
+          if [ "${{ github.event.inputs.DISABLE_UNUSED_WARNINGS }}" == "true" ]; then
+            export KCFLAGS="-Wno-unused-variable"
+          fi
+          
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
 
       - name: 📦 Package Artifacts
