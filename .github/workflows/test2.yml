@@ -271,48 +271,9 @@ jobs:
             download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
           fi
 
-      - name: 🧩 Download & Apply SUSFS Source & Fixes
-        if: github.event.inputs.ENABLE_SUSFS == 'true'
-        run: |
-          cd ${KERNEL_ROOT}
-          echo ">>> Cloning SUSFS Source branch: ${{ github.event.inputs.SUSFS_BRANCH }}..."
-          git clone -b ${{ github.event.inputs.SUSFS_BRANCH }} https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
-          
-          echo ">>> Copying SUSFS files into kernel tree..."
-          cp -r susfs4ksu/kernel_patches/* ./ || true
-          
-          echo ">>> Automatically locating and applying SUSFS patch..."
-          SUSFS_PATCH=$(find susfs4ksu -name "50_add_susfs_in_*.patch" | head -n 1)
-          if [ -n "$SUSFS_PATCH" ]; then
-            echo "Applying: $SUSFS_PATCH"
-            patch -p1 --forward < "$SUSFS_PATCH" || echo "⚠️ Some generic chunks failed, relying on device-specific fixes..."
-          fi
-          
-          MAC_PATCH=$(find susfs4ksu -name "51_susfs_add_maco_fix_*.patch" | head -n 1)
-          if [ -n "$MAC_PATCH" ]; then
-            echo "Applying Maco Fix: $MAC_PATCH"
-            patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
-          fi
-
-          if [ "${{ github.event.inputs.ENABLE_SUSFS_DEVICE_FIXES }}" == "true" ]; then
-            echo ">>> Fetching device-specific SUSFS patches..."
-            git clone --depth=1 ${{ github.event.inputs.SUSFS_DEVICE_FIXES_REPO }} wild_patches
-            
-            FIX_DIR="wild_patches/${{ github.event.inputs.SUSFS_DEVICE_FIXES_PATH }}"
-            if [ -d "$FIX_DIR" ]; then
-              echo ">>> Applying patches from $FIX_DIR..."
-              for fix_patch in "$FIX_DIR"/*.patch; do
-                if [ -f "$fix_patch" ]; then
-                  echo "Applying fix: $fix_patch"
-                  patch -p1 --forward < "$fix_patch" || echo "⚠️ Fix patch had issues or was already applied."
-                fi
-              done
-            else
-              echo "🚨 WARNING: Device patch directory $FIX_DIR not found!"
-            fi
-            rm -rf wild_patches
-          fi
-
+      # ==========================================
+      # 1. RUN ROOT MANAGER FIRST
+      # ==========================================
       - name: 🛡️ Inject Root Manager
         run: |
           cd ${KERNEL_ROOT}
@@ -359,6 +320,51 @@ jobs:
               fi
               echo "✅ Successfully completed manual copy fallback!"
             fi
+          fi
+
+      # ==========================================
+      # 2. RUN SUSFS PATCHES AFTER ROOT MANAGER
+      # ==========================================
+      - name: 🧩 Download & Apply SUSFS Source & Fixes
+        if: github.event.inputs.ENABLE_SUSFS == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Cloning SUSFS Source branch: ${{ github.event.inputs.SUSFS_BRANCH }}..."
+          git clone -b ${{ github.event.inputs.SUSFS_BRANCH }} https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          
+          echo ">>> Copying SUSFS files into kernel tree..."
+          cp -r susfs4ksu/kernel_patches/* ./ || true
+          
+          echo ">>> Automatically locating and applying SUSFS patch..."
+          SUSFS_PATCH=$(find susfs4ksu -name "50_add_susfs_in_*.patch" | head -n 1)
+          if [ -n "$SUSFS_PATCH" ]; then
+            echo "Applying: $SUSFS_PATCH"
+            patch -p1 --forward < "$SUSFS_PATCH" || echo "⚠️ Some generic chunks failed, relying on device-specific fixes..."
+          fi
+          
+          MAC_PATCH=$(find susfs4ksu -name "51_susfs_add_maco_fix_*.patch" | head -n 1)
+          if [ -n "$MAC_PATCH" ]; then
+            echo "Applying Maco Fix: $MAC_PATCH"
+            patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
+          fi
+
+          if [ "${{ github.event.inputs.ENABLE_SUSFS_DEVICE_FIXES }}" == "true" ]; then
+            echo ">>> Fetching device-specific SUSFS patches..."
+            git clone --depth=1 ${{ github.event.inputs.SUSFS_DEVICE_FIXES_REPO }} wild_patches
+            
+            FIX_DIR="wild_patches/${{ github.event.inputs.SUSFS_DEVICE_FIXES_PATH }}"
+            if [ -d "$FIX_DIR" ]; then
+              echo ">>> Applying patches from $FIX_DIR..."
+              for fix_patch in "$FIX_DIR"/*.patch; do
+                if [ -f "$fix_patch" ]; then
+                  echo "Applying fix: $fix_patch"
+                  patch -p1 --forward < "$fix_patch" || echo "⚠️ Fix patch had issues or was already applied."
+                fi
+              done
+            else
+              echo "🚨 WARNING: Device patch directory $FIX_DIR not found!"
+            fi
+            rm -rf wild_patches
           fi
 
       - name: 🔒 Inject Baseband Guard (BBG)
