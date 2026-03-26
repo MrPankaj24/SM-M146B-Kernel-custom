@@ -1,0 +1,937 @@
+name: 🏗️ BBG SUSFS ROOT (s5e8535 / M14 - Universal)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source URL'
+        required: true
+        default: 'https://github.com/WildKernels/Samsung_Kernels'
+      KERNEL_BRANCH:
+        description: 'Kernel Branch'
+        required: true
+        default: 'SM-M146B-Oneui7-ADYJ2'
+
+      # --- BUILD METHOD ---
+      BUILD_METHOD:
+        description: 'Build Method'
+        type: choice
+        options:
+          - 'build_kernel.sh (Samsung OEM Script)'
+          - 'Manual make (Custom Toolchain)'
+        default: 'build_kernel.sh (Samsung OEM Script)'
+      LTO_TYPE:
+        description: 'LTO type (only for build_kernel.sh)'
+        type: choice
+        options:
+          - 'thin'
+          - 'full'
+          - 'none'
+        default: 'thin'
+      CLANG_VERSION:
+        description: 'Compiler (only for Manual make method)'
+        type: choice
+        options:
+          - 'clang-r487747c (AOSP - Android 14 Stable)'
+          - 'clang-r450784d (AOSP - Android 13 Release)'
+          - 'WildKernels (SM-M146B-Oneui7-ADYJ2)'
+          - 'clang-22 (LLVM Official APT Repo)'
+          - 'clang-20 (Neutron Toolchain)'
+        default: 'clang-r487747c (AOSP - Android 14 Stable)'
+
+      DEVICE:
+        description: 'Device Codename (fallback defconfig prefix)'
+        required: true
+        default: 'm14x'
+      DEFCONFIG_NAME:
+        description: 'Defconfig filename (without _defconfig suffix)'
+        required: true
+        default: 's5e8535-m14xnsxx'
+
+      # --- COMPILER FIXES ---
+      DISABLE_STRICT_WARNINGS:
+        description: 'Bypass strict compiler crashes (-Wno-unused-variable, -Wno-implicit-int)?'
+        type: boolean
+        default: true
+
+      # --- ROOT MANAGER ---
+      ROOT_MANAGER:
+        description: 'Select Root Manager'
+        type: choice
+        options:
+          - 'Wild_KSU'
+          - 'ReSukiSU'
+          - 'KernelSU-Next'
+          - 'KernelSU (Official)'
+          - 'None / Skip'
+        default: 'Wild_KSU'
+      PATCH_ROOT_MANAGER:
+        description: 'Execute setup.sh script? (CHECK for clean untouched sources)'
+        type: boolean
+        default: true
+
+      # --- SUSFS ---
+      ENABLE_SUSFS:
+        description: 'Download & Apply SUSFS Patches? (UNCHECK if source is pre-patched)'
+        type: boolean
+        default: true
+      SUSFS_BRANCH:
+        description: 'SUSFS Branch to clone'
+        required: false
+        default: 'gki-android13-5.15'
+      SUSFS_COMMIT:
+        description: 'Pin SUSFS to specific commit hash (leave empty for HEAD)'
+        required: false
+        default: 'f20b72ca8c5214275af2cd969c58d8054a761353'
+
+      # --- SUSFS DEVICE FIXES ---
+      ENABLE_SUSFS_DEVICE_FIXES:
+        description: 'Enable Device-Specific SUSFS Fixes (for .rej files)?'
+        type: boolean
+        default: true
+      SUSFS_DEVICE_FIXES_REPO:
+        description: 'Repo containing device fixes'
+        required: false
+        default: 'https://github.com/WildKernels/kernel_patches'
+      SUSFS_DEVICE_FIXES_PATH:
+        description: 'Path inside repo to the .patch files'
+        required: false
+        default: 'samsung/SM-M146B-Oneui7-ADYJ2'
+
+      # --- BBG ---
+      ENABLE_BBG:
+        description: 'Enable Baseband Guard (BBG)?'
+        type: boolean
+        default: true
+
+      # --- ANYKERNEL3 ---
+      ENABLE_ANYKERNEL3:
+        description: 'Package with AnyKernel3 for flashing?'
+        type: boolean
+        default: true
+      ANYKERNEL3_BRANCH:
+        description: 'AnyKernel3 branch'
+        required: false
+        default: 'gki-2.0'
+
+      # --- CONFIG TOGGLES ---
+      ENABLE_CUSTOM_DEFCONFIG:
+        description: 'Override base defconfig with Custom URL?'
+        type: boolean
+        default: false
+      CUSTOM_DEFCONFIG_URL:
+        description: 'URL for Custom Base Defconfig'
+        required: false
+        default: ''
+
+      ENABLE_SU_CONFIG:
+        description: 'Enable Generated su.config (SUSFS & Anti-Root Bypass)?'
+        type: boolean
+        default: true
+      ENABLE_PERF_CONFIG:
+        description: 'Enable perf.config?'
+        type: boolean
+        default: false
+      PERF_CONFIG_URL:
+        description: 'URL for perf.config (leave empty if already in source tree)'
+        required: false
+        default: ''
+      ENABLE_NETHUNTER_CONFIG:
+        description: 'Enable nethunter.config?'
+        type: boolean
+        default: false
+      NETHUNTER_CONFIG_URL:
+        description: 'URL for nethunter.config'
+        required: false
+        default: ''
+      ENABLE_CUSTOM_CONFIG:
+        description: 'Enable custom.config?'
+        type: boolean
+        default: false
+      CUSTOM_CONFIG_URL:
+        description: 'URL for custom.config'
+        required: false
+        default: ''
+
+      # --- KERNEL CUSTOMIZATION ---
+      KERNEL_SUFFIX:
+        description: 'Custom kernel version suffix (appended to version string)'
+        required: false
+        default: '-Wild-BBG'
+
+jobs:
+  build:
+    name: 🏗️ Build Kernel (${{ github.event.inputs.DEVICE }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    env:
+      KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
+      OUTDIR: ${{ github.workspace }}/kernel_workspace/out
+      MODULES_OUTDIR: ${{ github.workspace }}/kernel_workspace/modules_out
+      TARGET_SOC: s5e8535
+      PLATFORM_VERSION: 15
+      ANDROID_MAJOR_VERSION: v
+      ARCH: arm64
+      SUBARCH: arm64
+
+    steps:
+
+      # ==========================================
+      # SETUP
+      # ==========================================
+
+      - name: 📥 Checkout Workflow Repository
+        uses: actions/checkout@v4
+
+      - name: 🧹 Free Disk Space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+          testing: false
+
+      - name: 📦 Install Build Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential make bc libncurses-dev bison flex \
+            python3 python3-setuptools python-is-python3 git ccache rsync \
+            libssl-dev libelf-dev dwarves device-tree-compiler libyaml-dev \
+            file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
+            lz4 zstd cpio curl wget zip unzip
+
+      - name: 🧹 Prepare Workspace Directories
+        run: |
+          set -euo pipefail
+          rm -rf "${KERNEL_ROOT}"
+          mkdir -p "${KERNEL_ROOT}"
+
+      - name: 📥 Clone Kernel Source
+        run: |
+          echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
+          git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} \
+            ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
+
+      - name: 📦 Extract tar.xz Archives
+        run: |
+          cd ${KERNEL_ROOT}
+          find . -type f -name '*.tar.xz' -print0 | while IFS= read -r -d '' file; do
+            echo ">>> Extracting: $file"
+            tar -xf "$file"
+            rm "$file"
+          done
+
+      - name: 📥 Clone AnyKernel3
+        if: github.event.inputs.ENABLE_ANYKERNEL3 == 'true'
+        run: |
+          git clone --depth=1 -b ${{ github.event.inputs.ANYKERNEL3_BRANCH }} \
+            https://github.com/WildKernels/AnyKernel3.git ${GITHUB_WORKSPACE}/AnyKernel3
+
+      # ==========================================
+      # TOOLCHAIN (only for Manual make)
+      # ==========================================
+
+      - name: 🔧 Setup Toolchain (${{ github.event.inputs.CLANG_VERSION }})
+        if: contains(github.event.inputs.BUILD_METHOD, 'Manual make')
+        run: |
+          set -euo pipefail
+          mkdir -p ${GITHUB_WORKSPACE}/toolchains
+          cd ${GITHUB_WORKSPACE}/toolchains
+
+          CHOICE="${{ github.event.inputs.CLANG_VERSION }}"
+
+          if [[ "$CHOICE" == *"WildKernels"* ]]; then
+            echo ">>> Cloning WildKernels Repository for Toolchain..."
+            git clone --depth=1 -b SM-M146B-Oneui7-ADYJ2 https://github.com/WildKernels/Samsung_Kernels.git wild_repo
+            CLANG_BIN_PATH=$(find wild_repo -type f -name "clang" -executable | head -n 1)
+            if [ -n "$CLANG_BIN_PATH" ]; then
+              ABS_COMPILER_DIR=$(realpath "$(dirname "$CLANG_BIN_PATH")")
+              echo "COMPILER_PATH=${ABS_COMPILER_DIR}" >> $GITHUB_ENV
+              echo "COMPILER_CC=clang" >> $GITHUB_ENV
+              echo "✅ Found clang at: $ABS_COMPILER_DIR"
+            else
+              echo "🚨 ERROR: Could not find 'clang' inside WildKernels repo!"
+              exit 1
+            fi
+
+          elif [[ "$CHOICE" == *"AOSP"* ]]; then
+            CLANG_VER=$(echo "$CHOICE" | awk '{print $1}')
+            if [[ "$CLANG_VER" == "clang-r487747c" ]]; then
+              DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-14.0.0_r1/${CLANG_VER}.tar.gz"
+            else
+              DL_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android13-release/${CLANG_VER}.tar.gz"
+            fi
+            mkdir -p ${CLANG_VER}
+            curl -L "$DL_URL" -o clang.tar.gz
+            tar -xzf clang.tar.gz -C ${CLANG_VER}
+            echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/${CLANG_VER}/bin" >> $GITHUB_ENV
+            echo "COMPILER_CC=clang" >> $GITHUB_ENV
+
+          elif [[ "$CHOICE" == *"clang-22"* ]]; then
+            curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/llvm-archive-keyring.gpg
+            echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+            sudo apt-get update -y && sudo apt-get install -y clang-22 llvm-22 lld-22
+            sudo ln -sf /usr/bin/clang-22 /usr/bin/clang || true
+            sudo ln -sf /usr/bin/ld.lld-22 /usr/bin/ld.lld || true
+            echo "COMPILER_PATH=/usr/bin" >> $GITHUB_ENV
+            echo "COMPILER_CC=clang-22" >> $GITHUB_ENV
+
+          elif [[ "$CHOICE" == *"Neutron"* ]]; then
+            mkdir -p neutron && cd neutron
+            curl -LO "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman"
+            chmod +x antman && ./antman -S
+            echo "COMPILER_PATH=${GITHUB_WORKSPACE}/toolchains/neutron/bin" >> $GITHUB_ENV
+            echo "COMPILER_CC=clang" >> $GITHUB_ENV
+          fi
+
+      - name: ⬇️ Download AOSP Kernel Build Tools
+        if: contains(github.event.inputs.BUILD_METHOD, 'Manual make')
+        run: |
+          git clone --depth=1 -b main https://android.googlesource.com/kernel/prebuilts/build-tools \
+            ${GITHUB_WORKSPACE}/toolchains/build-tools
+          echo "AOSP_TOOLS_PATH=${GITHUB_WORKSPACE}/toolchains/build-tools/linux-x86/bin" >> $GITHUB_ENV
+
+      # ==========================================
+      # 1. ROOT MANAGER
+      # ==========================================
+
+      - name: 🛡️ Inject Root Manager
+        run: |
+          cd ${KERNEL_ROOT}
+          MANAGER="${{ github.event.inputs.ROOT_MANAGER }}"
+          RUN_PATCH="${{ github.event.inputs.PATCH_ROOT_MANAGER }}"
+
+          if [[ "$MANAGER" == *"None"* ]]; then
+            echo ">>> Skipping Root Manager."
+            exit 0
+          fi
+
+          if [ "$RUN_PATCH" == "true" ]; then
+            echo ">>> Running setup.sh for $MANAGER..."
+            if [[ "$MANAGER" == *"Wild_KSU"* ]]; then
+              curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s wild
+            elif [[ "$MANAGER" == *"ReSukiSU"* ]]; then
+              curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+            elif [[ "$MANAGER" == *"KernelSU-Next"* ]]; then
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -
+            elif [[ "$MANAGER" == *"KernelSU (Official)"* ]]; then
+              curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+            fi
+            echo "✅ setup.sh finished."
+          else
+            echo ">>> Manual clone for $MANAGER..."
+            rm -rf KernelSU
+            if [[ "$MANAGER" == *"Wild_KSU"* ]]; then
+              git clone -b wild https://github.com/WildKernels/Wild_KSU.git KernelSU
+            elif [[ "$MANAGER" == *"ReSukiSU"* ]]; then
+              git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+            elif [[ "$MANAGER" == *"KernelSU-Next"* ]]; then
+              git clone -b next https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU
+            elif [[ "$MANAGER" == *"KernelSU (Official)"* ]]; then
+              git clone https://github.com/tiann/KernelSU.git KernelSU
+            fi
+
+            rm -rf drivers/kernelsu && mkdir -p drivers/kernelsu
+            if [ -d "KernelSU/kernel" ]; then
+              cp -r KernelSU/kernel/* drivers/kernelsu/
+            else
+              cp -r KernelSU/* drivers/kernelsu/
+            fi
+            echo "✅ Manual copy complete."
+          fi
+
+      - name: 🔢 Detect KSU Version
+        run: |
+          cd ${KERNEL_ROOT}
+
+          # Find KSU directory (setup.sh may name it differently)
+          KSU_DIR=""
+          for d in Wild_KSU/kernel KernelSU/kernel drivers/kernelsu; do
+            if [ -d "$d" ] && [ -f "$d/Kbuild" ]; then
+              KSU_DIR="$d"
+              break
+            fi
+          done
+
+          if [ -z "$KSU_DIR" ]; then
+            echo "⚠️ KSU kernel directory not found, skipping version detection."
+            echo "KSU_VERSION=unknown" >> $GITHUB_ENV
+            echo "KSU_VERSION_TAG=unknown" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          echo ">>> Found KSU at: $KSU_DIR"
+          cd "$KSU_DIR"
+
+          BASE_VERSION=30000
+          if [ -d ".git" ] || [ -d "../../.git" ]; then
+            # Unshallow if needed
+            git fetch --unshallow 2>/dev/null || true
+            KSU_GIT_VERSION=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+            KSU_VERSION=$((BASE_VERSION + KSU_GIT_VERSION))
+            KSU_GIT_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.1")
+          else
+            KSU_VERSION=33208
+            KSU_GIT_TAG="v3.1.2"
+          fi
+
+          echo "KSU_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+          echo "KSU_VERSION_TAG=$KSU_GIT_TAG" >> $GITHUB_ENV
+          echo "✅ KSU Version: $KSU_VERSION ($KSU_GIT_TAG)"
+
+          # Update Kbuild fallbacks if the file exists
+          if [ -f "Kbuild" ]; then
+            sed -i "s/KSU_VERSION_FALLBACK := [0-9]\+/KSU_VERSION_FALLBACK := ${KSU_VERSION}/" Kbuild
+            sed -i "s/KSU_VERSION_TAG_FALLBACK := .*/KSU_VERSION_TAG_FALLBACK := ${KSU_GIT_TAG}/" Kbuild
+            echo "✅ Updated Kbuild fallbacks."
+          fi
+
+      # ==========================================
+      # 2. SUSFS PATCHES (after Root Manager)
+      # ==========================================
+
+      - name: 🧩 Download & Apply SUSFS Patches
+        if: github.event.inputs.ENABLE_SUSFS == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+
+          echo ">>> Cloning SUSFS branch: ${{ github.event.inputs.SUSFS_BRANCH }}..."
+          git clone -b ${{ github.event.inputs.SUSFS_BRANCH }} \
+            https://gitlab.com/simonpunk/susfs4ksu.git ${GITHUB_WORKSPACE}/susfs4ksu
+
+          # Pin to specific commit if provided
+          SUSFS_COMMIT="${{ github.event.inputs.SUSFS_COMMIT }}"
+          if [ -n "$SUSFS_COMMIT" ]; then
+            echo ">>> Checking out SUSFS commit: $SUSFS_COMMIT"
+            cd ${GITHUB_WORKSPACE}/susfs4ksu
+            git checkout "$SUSFS_COMMIT"
+            cd ${KERNEL_ROOT}
+          fi
+
+          SUSFS4KSU="${GITHUB_WORKSPACE}/susfs4ksu"
+
+          # Copy SUSFS source files precisely (not blindly)
+          echo ">>> Copying SUSFS kernel files..."
+          cp "$SUSFS4KSU/kernel_patches/fs/"* ./fs/ 2>/dev/null || true
+          cp "$SUSFS4KSU/kernel_patches/include/linux/"* ./include/linux/ 2>/dev/null || true
+
+          # Apply the main SUSFS patch
+          SUSFS_PATCH_NAME="50_add_susfs_in_${{ github.event.inputs.SUSFS_BRANCH }}.patch"
+          SUSFS_PATCH="$SUSFS4KSU/kernel_patches/${SUSFS_PATCH_NAME}"
+
+          if [ -f "$SUSFS_PATCH" ]; then
+            echo ">>> Applying: $SUSFS_PATCH_NAME"
+            cp "$SUSFS_PATCH" ./
+            patch -p1 --forward < "$SUSFS_PATCH_NAME" || echo "⚠️ Some hunks failed — device fixes should resolve them."
+            rm -f "$SUSFS_PATCH_NAME"
+          else
+            echo "⚠️ SUSFS patch not found at: $SUSFS_PATCH"
+            echo ">>> Searching for fallback..."
+            FALLBACK=$(find "$SUSFS4KSU" -name "50_add_susfs_in_*.patch" | head -n 1)
+            if [ -n "$FALLBACK" ]; then
+              echo ">>> Applying fallback: $FALLBACK"
+              patch -p1 --forward < "$FALLBACK" || echo "⚠️ Fallback patch had issues."
+            fi
+          fi
+
+          # Apply maco fix if available
+          MAC_PATCH=$(find "$SUSFS4KSU" -name "51_susfs_add_maco_fix_*.patch" | head -n 1)
+          if [ -n "$MAC_PATCH" ]; then
+            echo ">>> Applying Maco Fix: $MAC_PATCH"
+            patch -p1 --forward < "$MAC_PATCH" || echo "⚠️ Maco patch skipped."
+          fi
+
+      - name: 🔧 Apply Device-Specific SUSFS Fixes
+        if: github.event.inputs.ENABLE_SUSFS == 'true' && github.event.inputs.ENABLE_SUSFS_DEVICE_FIXES == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+
+          echo ">>> Cloning device fix patches..."
+          git clone --depth=1 ${{ github.event.inputs.SUSFS_DEVICE_FIXES_REPO }} \
+            ${GITHUB_WORKSPACE}/kernel_patches
+
+          FIX_DIR="${GITHUB_WORKSPACE}/kernel_patches/${{ github.event.inputs.SUSFS_DEVICE_FIXES_PATH }}"
+
+          if [ -d "$FIX_DIR" ]; then
+            # Copy patches to kernel root first (some patches expect this)
+            cp "$FIX_DIR/"*.patch ./ 2>/dev/null || true
+            echo ">>> Applying device-specific patches from: ${{ github.event.inputs.SUSFS_DEVICE_FIXES_PATH }}"
+            for p in *.patch; do
+              if [ -f "$p" ] && [[ "$p" != "50_add_susfs"* ]]; then
+                echo "  Applying: $p"
+                patch -p1 --forward < "$p" || echo "  ⚠️ Patch $p had issues or was already applied."
+              fi
+            done
+            # Clean up copied patches
+            rm -f *.patch
+          else
+            echo "🚨 WARNING: Device patch directory not found: $FIX_DIR"
+          fi
+
+      # ==========================================
+      # 3. BBG
+      # ==========================================
+
+      - name: 🔒 Inject Baseband Guard (BBG)
+        if: github.event.inputs.ENABLE_BBG == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Installing BBG..."
+          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+
+          # Determine target defconfig
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
+            DEFCONFIG_FILE="arch/arm64/configs/custom_base_defconfig"
+          else
+            DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}_defconfig"
+          fi
+
+          if [ -f "$DEFCONFIG_FILE" ]; then
+            echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
+            echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
+          fi
+
+          # Add BBG to LSM chain in Kconfig
+          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
+
+          # Fix get_link API if needed
+          BBG_C_FILE=$(find . -path ./susfs4ksu -prune -o -name "baseband_guard.c" -print | head -n 1)
+          if [ -n "$BBG_C_FILE" ] && grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
+            echo ">>> Applying BBG get_link fix..."
+            KERNEL_PATCHES_DIR="${GITHUB_WORKSPACE}/kernel_patches"
+            if [ -f "$KERNEL_PATCHES_DIR/experimental/bbg/bbg_fix_get_link.patch" ]; then
+              patch -p1 --forward < "$KERNEL_PATCHES_DIR/experimental/bbg/bbg_fix_get_link.patch"
+            else
+              curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
+              patch -p1 --forward < bbg_fix.patch
+              rm -f bbg_fix.patch
+            fi
+          fi
+
+      # ==========================================
+      # CONFIGURATION
+      # ==========================================
+
+      - name: 📝 Generate su.config
+        if: github.event.inputs.ENABLE_SU_CONFIG == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Generating su.config..."
+          # CRITICAL: No leading whitespace inside heredoc — breaks kernel config parser!
+          cat > arch/arm64/configs/su.config << 'EOF'
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_UH=n
+          CONFIG_UH_RKP=n
+          CONFIG_UH_LKMAUTH=n
+          CONFIG_UH_LKM_BLOCK=n
+          CONFIG_RKP_CFP_JOPP=n
+          CONFIG_RKP_CFP=n
+          CONFIG_RKP=n
+          CONFIG_KDP=n
+          CONFIG_KDP_NS=n
+          CONFIG_SECURITY_DEFEX=n
+          CONFIG_PROCA=n
+          CONFIG_FIVE=n
+          CONFIG_SAMSUNG_TUI=n
+          CONFIG_STUI=n
+          CONFIG_MODULES=y
+          CONFIG_MODULE_FORCE_LOAD=y
+          CONFIG_MODULE_UNLOAD=y
+          CONFIG_MODULE_FORCE_UNLOAD=y
+          CONFIG_MODVERSIONS=y
+          CONFIG_MODULE_SRCVERSION_ALL=n
+          CONFIG_MODULE_SIG=n
+          CONFIG_MODULE_COMPRESS=n
+          CONFIG_TRIM_UNUSED_KSYMS=n
+          EOF
+          # Strip any accidental leading whitespace from config lines
+          sed -i 's/^[[:space:]]*//' arch/arm64/configs/su.config
+
+      - name: 📥 Fetch Extra Configs & Custom Defconfig
+        run: |
+          cd ${KERNEL_ROOT}/arch/arm64/configs/
+
+          download_config() {
+            local url="$1"
+            local filename="$2"
+            if [ -n "$url" ]; then
+              local raw_url=$(echo "$url" | sed 's|github.com|raw.githubusercontent.com|' | sed 's|/blob/|/|')
+              echo ">>> Downloading $filename from $raw_url..."
+              curl -LSs "$raw_url" -o "$filename"
+              # Strip any leading whitespace from config lines
+              sed -i 's/^[[:space:]]*//' "$filename"
+            fi
+          }
+
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -n "${{ github.event.inputs.CUSTOM_DEFCONFIG_URL }}" ]; then
+            download_config "${{ github.event.inputs.CUSTOM_DEFCONFIG_URL }}" "custom_base_defconfig"
+          fi
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -n "${{ github.event.inputs.PERF_CONFIG_URL }}" ]; then
+            download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"
+          fi
+          if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -n "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" ]; then
+            download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"
+          fi
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ] && [ -n "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" ]; then
+            download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
+          fi
+
+      - name: ⚙️ Append Kernel Build Configuration
+        run: |
+          cd ${KERNEL_ROOT}
+
+          # Determine the active defconfig
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
+            ACTIVE_DEFCONFIG="arch/arm64/configs/custom_base_defconfig"
+          else
+            ACTIVE_DEFCONFIG="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}_defconfig"
+          fi
+
+          echo ">>> Active defconfig: $ACTIVE_DEFCONFIG"
+
+          # For build_kernel.sh method, append su.config contents directly to defconfig
+          if [[ "${{ github.event.inputs.BUILD_METHOD }}" == *"build_kernel.sh"* ]]; then
+            echo ">>> Merging configs into defconfig for build_kernel.sh..."
+            if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then
+              cat arch/arm64/configs/su.config >> "$ACTIVE_DEFCONFIG"
+            fi
+            if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then
+              cat arch/arm64/configs/perf.config >> "$ACTIVE_DEFCONFIG"
+            fi
+            if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then
+              cat arch/arm64/configs/nethunter.config >> "$ACTIVE_DEFCONFIG"
+            fi
+            if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom.config" ]; then
+              cat arch/arm64/configs/custom.config >> "$ACTIVE_DEFCONFIG"
+            fi
+          fi
+
+          # Remove check_defconfig from build.config.gki (prevents build failures after config changes)
+          if [ -f "build.config.gki" ]; then
+            sed -i 's/check_defconfig//' build.config.gki
+            echo ">>> Removed check_defconfig from build.config.gki"
+          fi
+
+      - name: ✏️ Customize Kernel Name
+        run: |
+          cd ${KERNEL_ROOT}
+          SUFFIX="${{ github.event.inputs.KERNEL_SUFFIX }}"
+
+          if [ -n "$SUFFIX" ] && [ -f "scripts/setlocalversion" ]; then
+            # Append suffix to kernel version string
+            sed -i "\$s|echo \"\\\$res\"|echo \"\\\$res${SUFFIX}\"|" scripts/setlocalversion
+            echo ">>> Kernel suffix set to: $SUFFIX"
+          fi
+
+          # Set a fixed kernel build timestamp (reproducible builds)
+          if [ -f "scripts/mkcompile_h" ]; then
+            BUILD_TIMESTAMP=$(date -u '+%a %b %d %H:%M:%S UTC %Y')
+            perl -pi -e "s{UTS_VERSION=\"\\\$\\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT ${BUILD_TIMESTAMP}\"}" scripts/mkcompile_h 2>/dev/null || true
+          fi
+
+          # Remove ABI protected exports (prevents build failures after modifications)
+          rm -rf android/abi_gki_protected_exports_* 2>/dev/null || true
+          if [ -f "BUILD.bazel" ]; then
+            perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' BUILD.bazel 2>/dev/null || true
+          fi
+
+      - name: 🧼 Clean Dirty Flags
+        run: |
+          cd ${KERNEL_ROOT}
+          if [ -f "scripts/setlocalversion" ]; then
+            sed -i 's/-dirty//' scripts/setlocalversion
+            echo ">>> Removed -dirty flag from setlocalversion"
+          fi
+
+      # ==========================================
+      # BUILD
+      # ==========================================
+
+      - name: 🔨 Compile Kernel
+        run: |
+          set -euo pipefail
+          cd ${KERNEL_ROOT}
+
+          if [[ "${{ github.event.inputs.BUILD_METHOD }}" == *"build_kernel.sh"* ]]; then
+            # === Samsung OEM Build Script ===
+            echo ">>> Building with build_kernel.sh (LTO=${{ github.event.inputs.LTO_TYPE }})..."
+
+            if [ -f "build_kernel.sh" ]; then
+              chmod +x build_kernel.sh
+              LTO=${{ github.event.inputs.LTO_TYPE }} ./build_kernel.sh 2>&1 | tee build.log || true
+            elif [ -f "build_kernel_GKI.sh" ]; then
+              chmod +x build_kernel_GKI.sh
+              LTO=${{ github.event.inputs.LTO_TYPE }} ./build_kernel_GKI.sh 2>&1 | tee build.log || true
+            else
+              echo "🚨 ERROR: No build script found! Falling back to manual make..."
+              # Fall through to manual build below
+              echo "FALLBACK_MANUAL=true" >> $GITHUB_ENV
+            fi
+
+          fi
+
+          if [[ "${{ github.event.inputs.BUILD_METHOD }}" == *"Manual make"* ]] || [ "${FALLBACK_MANUAL:-}" == "true" ]; then
+            # === Manual make Build ===
+            echo ">>> Building with manual make..."
+            mkdir -p ${OUTDIR}
+
+            export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
+            export CC="${COMPILER_CC}"
+            export LD=ld.lld
+            export CROSS_COMPILE=aarch64-linux-gnu-
+            export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+            export LLVM=1
+            export LLVM_IAS=1
+            export DTC_FLAGS="-@"
+
+            if [ "${{ github.event.inputs.DISABLE_STRICT_WARNINGS }}" == "true" ]; then
+              export KCFLAGS="-Wno-unused-variable -Wno-implicit-int"
+              echo ">>> 🛡️ Strict warning bypass enabled"
+            fi
+
+            # Build config arguments
+            if [ "${{ github.event.inputs.ENABLE_CUSTOM_DEFCONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
+              CONFIG_ARGS="custom_base_defconfig"
+            else
+              CONFIG_ARGS="${{ github.event.inputs.DEFCONFIG_NAME }}_defconfig"
+            fi
+
+            # Append fragment configs (only for manual make — build_kernel.sh merges them above)
+            if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
+            if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
+            if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
+            if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom.config" ]; then CONFIG_ARGS="$CONFIG_ARGS custom.config"; fi
+
+            echo ">>> Generating config: make $CONFIG_ARGS"
+            make O="${OUTDIR}" CC="${CC}" $CONFIG_ARGS
+
+            echo ">>> Compiling Kernel ($(nproc --all) threads)..."
+            make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" 2>&1 | tee build.log
+          fi
+
+      - name: 🧩 Compile & Strip Modules
+        if: contains(github.event.inputs.BUILD_METHOD, 'Manual make')
+        run: |
+          set -euo pipefail
+          cd ${KERNEL_ROOT}
+          mkdir -p ${MODULES_OUTDIR}
+          export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
+          export CC="${COMPILER_CC}"
+          export LD=ld.lld
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          if [ "${{ github.event.inputs.DISABLE_STRICT_WARNINGS }}" == "true" ]; then
+            export KCFLAGS="-Wno-unused-variable -Wno-implicit-int"
+          fi
+
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" \
+            INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
+            INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
+
+      # ==========================================
+      # PACKAGING
+      # ==========================================
+
+      - name: 📦 Locate Kernel Image
+        id: find_image
+        run: |
+          cd ${KERNEL_ROOT}
+
+          # Search all known Image locations
+          IMAGE_FOUND=""
+          for candidate in \
+            "arch/arm64/boot/Image" \
+            "out/arch/arm64/boot/Image" \
+            "${OUTDIR}/arch/arm64/boot/Image" \
+            "kernel_platform/sec/dist/Image" \
+            "kernel_platform/gki/dist/Image" \
+            "out/msm-kalama-kalama-gki/dist/Image" \
+            "out/s5e9945_user/dist/Image"; do
+            if [ -f "$candidate" ]; then
+              IMAGE_FOUND="$(realpath "$candidate")"
+              break
+            fi
+          done
+
+          if [ -n "$IMAGE_FOUND" ]; then
+            echo "✅ Kernel Image found at: $IMAGE_FOUND"
+            echo "IMAGE_PATH=$IMAGE_FOUND" >> $GITHUB_ENV
+            echo "image_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "🚨 ERROR: Kernel Image not found in any expected location!"
+            find . -name "Image" -type f 2>/dev/null || true
+            echo "image_found=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 📦 Package with AnyKernel3
+        if: github.event.inputs.ENABLE_ANYKERNEL3 == 'true' && steps.find_image.outputs.image_found == 'true'
+        run: |
+          cp "$IMAGE_PATH" ${GITHUB_WORKSPACE}/AnyKernel3/Image
+          echo "✅ Image copied to AnyKernel3"
+
+      - name: 📦 Package Build Artifacts
+        if: steps.find_image.outputs.image_found == 'true'
+        run: |
+          mkdir -p ${GITHUB_WORKSPACE}/artifacts/kernel
+          cp "$IMAGE_PATH" ${GITHUB_WORKSPACE}/artifacts/kernel/
+
+          # Package modules if they exist
+          if [ -d "${MODULES_OUTDIR}/lib" ]; then
+            tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib
+          fi
+
+          # Copy build log
+          if [ -f "${KERNEL_ROOT}/build.log" ]; then
+            tail -200 "${KERNEL_ROOT}/build.log" > ${GITHUB_WORKSPACE}/artifacts/build_tail.log
+          fi
+
+      # ==========================================
+      # DIAGNOSTICS
+      # ==========================================
+
+      - name: 🔍 Scan Patch Rejects
+        if: always()
+        run: |
+          REJECTS_DIR="${GITHUB_WORKSPACE}/patch-rejects"
+          mkdir -p "$REJECTS_DIR"
+
+          mapfile -t REJS < <(find "${KERNEL_ROOT}" -type f -name '*.rej' 2>/dev/null)
+          REJ_COUNT=${#REJS[@]}
+          echo "Found $REJ_COUNT .rej files"
+          echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
+
+          if [ "$REJ_COUNT" -gt 0 ]; then
+            for REJ in "${REJS[@]}"; do
+              REL="${REJ#"${KERNEL_ROOT}"/}"
+              DEST="$REJECTS_DIR/$REL"
+              mkdir -p "$(dirname "$DEST")"
+              cp "$REJ" "$DEST"
+              # Copy the original file alongside
+              ORIG="${REJ%.rej}"
+              if [ -f "$ORIG" ]; then
+                mkdir -p "$(dirname "$REJECTS_DIR/${REL%.rej}")"
+                cp "$ORIG" "$REJECTS_DIR/${REL%.rej}"
+              fi
+              echo "$REL" >> "$REJECTS_DIR/index.txt"
+            done
+            echo "⚠️ Patch rejects found — check the uploaded artifact for details."
+          fi
+
+      - name: 📋 Generate Build Summary
+        if: always()
+        run: |
+          SUMMARY="${GITHUB_WORKSPACE}/build_summary.md"
+          cat > "$SUMMARY" << HEADER
+          # 🏗️ Kernel Build Summary
+
+          ## Configuration
+          | Setting | Value |
+          |---------|-------|
+          | **Device** | ${{ github.event.inputs.DEVICE }} |
+          | **Kernel Source** | ${{ github.event.inputs.KERNEL_SOURCE }} |
+          | **Branch** | ${{ github.event.inputs.KERNEL_BRANCH }} |
+          | **Build Method** | ${{ github.event.inputs.BUILD_METHOD }} |
+          | **Defconfig** | ${{ github.event.inputs.DEFCONFIG_NAME }}_defconfig |
+          | **Root Manager** | ${{ github.event.inputs.ROOT_MANAGER }} |
+          | **KSU Version** | ${KSU_VERSION:-unknown} (${KSU_VERSION_TAG:-unknown}) |
+          | **SUSFS** | ${{ github.event.inputs.ENABLE_SUSFS }} |
+          | **BBG** | ${{ github.event.inputs.ENABLE_BBG }} |
+          | **AnyKernel3** | ${{ github.event.inputs.ENABLE_ANYKERNEL3 }} |
+
+          ## Artifacts
+          HEADER
+
+          if [ -f "$IMAGE_PATH" ] 2>/dev/null; then
+            echo "- ✅ **Kernel Image**: Found" >> "$SUMMARY"
+          else
+            echo "- ❌ **Kernel Image**: NOT Found" >> "$SUMMARY"
+          fi
+
+          if [ -d "${GITHUB_WORKSPACE}/AnyKernel3" ] && [ -f "${GITHUB_WORKSPACE}/AnyKernel3/Image" ]; then
+            echo "- ✅ **AnyKernel3**: Packaged" >> "$SUMMARY"
+          else
+            echo "- ⏭️ **AnyKernel3**: Skipped or failed" >> "$SUMMARY"
+          fi
+
+          echo "" >> "$SUMMARY"
+          echo "## Patch Rejects: ${REJ_COUNT:-0}" >> "$SUMMARY"
+
+          if [ -f "${GITHUB_WORKSPACE}/patch-rejects/index.txt" ]; then
+            echo '```' >> "$SUMMARY"
+            cat "${GITHUB_WORKSPACE}/patch-rejects/index.txt" >> "$SUMMARY"
+            echo '```' >> "$SUMMARY"
+          fi
+
+          echo "" >> "$SUMMARY"
+          cat "$SUMMARY"
+
+          # Also write to GitHub Step Summary
+          cat "$SUMMARY" >> $GITHUB_STEP_SUMMARY
+
+      # ==========================================
+      # UPLOADS
+      # ==========================================
+
+      - name: ⬆️ Upload AnyKernel3 Flashable
+        if: github.event.inputs.ENABLE_ANYKERNEL3 == 'true' && steps.find_image.outputs.image_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.DEVICE }}-${{ github.event.inputs.KERNEL_BRANCH }}-AnyKernel3
+          path: ${{ github.workspace }}/AnyKernel3/**
+          compression-level: 9
+          retention-days: 7
+
+      - name: ⬆️ Upload Kernel Artifacts
+        if: steps.find_image.outputs.image_found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.DEVICE }}-${{ github.event.inputs.KERNEL_BRANCH }}-kernel-build
+          path: ${{ github.workspace }}/artifacts/
+          retention-days: 7
+
+      - name: ⬆️ Upload Patch Rejects
+        if: always() && env.REJ_COUNT != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.DEVICE }}-${{ github.event.inputs.KERNEL_BRANCH }}-Rejected-Patches
+          path: ${{ github.workspace }}/patch-rejects/
+          retention-days: 7
+
+      - name: ⬆️ Upload Build Summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.DEVICE }}-${{ github.event.inputs.KERNEL_BRANCH }}-Build-Summary
+          path: ${{ github.workspace }}/build_summary.md
+          retention-days: 7
