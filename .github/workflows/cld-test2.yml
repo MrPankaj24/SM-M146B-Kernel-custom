@@ -20,7 +20,7 @@ on:
           - 'build_kernel.sh (LTO=none)'
           - 'Manual make - clang-r487747c (AOSP 14)'
           - 'Manual make - clang-r450784d (AOSP 13)'
-          - 'Manual make - WildKernels Toolchain'
+          - 'Manual make - WildKernels Toolchain (symlink-safe)'
           - 'Manual make - clang-22 (LLVM APT)'
           - 'Manual make - clang-20 (Neutron)'
         default: 'build_kernel.sh (LTO=thin)'
@@ -112,7 +112,6 @@ jobs:
       ANDROID_MAJOR_VERSION: v
       ARCH: arm64
       SUBARCH: arm64
-      # Derived defconfig name — change mapping here if needed
       DEFCONFIG_NAME: s5e8535-m14xnsxx
 
     steps:
@@ -180,12 +179,10 @@ jobs:
 
           if [[ "$METHOD" == *"build_kernel.sh"* ]]; then
             echo "USE_BUILD_SCRIPT=true" >> $GITHUB_ENV
-            # Extract LTO type from choice string
             LTO=$(echo "$METHOD" | grep -oP 'LTO=\K[a-z]+')
             echo "LTO_TYPE=${LTO:-thin}" >> $GITHUB_ENV
           else
             echo "USE_BUILD_SCRIPT=false" >> $GITHUB_ENV
-            # Extract compiler from choice string
             echo "MANUAL_COMPILER=$METHOD" >> $GITHUB_ENV
           fi
 
@@ -199,15 +196,55 @@ jobs:
           CHOICE="${MANUAL_COMPILER}"
 
           if [[ "$CHOICE" == *"WildKernels"* ]]; then
-            git clone --depth=1 -b SM-M146B-Oneui7-ADYJ2 \
-              https://github.com/WildKernels/Samsung_Kernels.git wild_repo
-            CLANG_BIN=$(find wild_repo -type f -name "clang" -executable | head -n 1)
-            if [ -n "$CLANG_BIN" ]; then
-              echo "COMPILER_PATH=$(realpath "$(dirname "$CLANG_BIN")")" >> $GITHUB_ENV
-              echo "COMPILER_CC=clang" >> $GITHUB_ENV
-            else
-              echo "🚨 ERROR: clang not found in WildKernels repo!" && exit 1
+            echo ">>> Fetching WildKernels toolchain via sparse-checkout (preserves symlinks)..."
+
+            # Step 1: Sparse clone — only metadata, no file blobs yet
+            git clone --filter=blob:none --sparse \
+              -b SM-M146B-Oneui7-ADYJ2 \
+              https://github.com/WildKernels/Samsung_Kernels.git wild_sparse
+            cd wild_sparse
+
+            # Step 2: Request ONLY the toolchain folder
+            git sparse-checkout set toolchain
+
+            # Step 3: Extract any tar.xz archives inside toolchain/
+            if [ -d "toolchain" ]; then
+              find toolchain -type f -name '*.tar.xz' -print0 | while IFS= read -r -d '' archive; do
+                echo ">>> Extracting: $archive"
+                tar -xf "$archive" -C "$(dirname "$archive")"
+                rm "$archive"
+              done
             fi
+
+            cd ${GITHUB_WORKSPACE}/toolchains
+
+            # Step 4: Copy with -a flag (PRESERVES symlinks, permissions, timestamps)
+            cp -a wild_sparse/toolchain ./toolchain
+
+            # Step 5: Find clang binary (check real files AND symlinks)
+            CLANG_BIN=$(find ./toolchain -name "clang" \( -type f -o -type l \) | head -n 1)
+
+            if [ -n "$CLANG_BIN" ]; then
+              ABS_DIR=$(realpath "$(dirname "$CLANG_BIN")")
+              echo "COMPILER_PATH=${ABS_DIR}" >> $GITHUB_ENV
+              echo "COMPILER_CC=clang" >> $GITHUB_ENV
+              echo "✅ Clang found at: $ABS_DIR"
+
+              # Verify symlinks are intact
+              echo ">>> Symlink verification:"
+              ls -la "$ABS_DIR"/clang* 2>/dev/null | head -5
+              file "$CLANG_BIN"
+            else
+              echo "🚨 ERROR: clang binary not found in toolchain!"
+              echo ">>> Toolchain directory structure:"
+              find ./toolchain -maxdepth 4 -type d | head -30
+              echo ">>> All executables found:"
+              find ./toolchain -type f -executable -name "clang*" -o -type l -name "clang*" 2>/dev/null | head -10
+              exit 1
+            fi
+
+            # Cleanup: remove the sparse clone, keep only the clean copy
+            rm -rf wild_sparse
 
           elif [[ "$CHOICE" == *"r487747c"* ]]; then
             mkdir -p clang-r487747c
@@ -415,7 +452,6 @@ jobs:
           cd ${KERNEL_ROOT}
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
 
-          # Determine defconfig
           if [ -n "${{ github.event.inputs.CUSTOM_DEFCONFIG_URL }}" ] && [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
             DEFCONFIG_FILE="arch/arm64/configs/custom_base_defconfig"
           else
@@ -495,7 +531,6 @@ jobs:
           CONFIG_MODULE_COMPRESS=n
           CONFIG_TRIM_UNUSED_KSYMS=n
           SUEOF
-          # CRITICAL: Strip leading whitespace from config lines
           sed -i 's/^[[:space:]]*//' arch/arm64/configs/su.config
 
       - name: 📥 Fetch Custom Defconfig (if provided)
@@ -511,7 +546,6 @@ jobs:
         run: |
           cd ${KERNEL_ROOT}
 
-          # Determine active defconfig
           if [ -f "arch/arm64/configs/custom_base_defconfig" ]; then
             ACTIVE_DEFCONFIG="arch/arm64/configs/custom_base_defconfig"
           else
@@ -519,8 +553,6 @@ jobs:
           fi
           echo ">>> Active defconfig: $ACTIVE_DEFCONFIG"
 
-          # For build_kernel.sh: merge fragment configs directly into defconfig
-          # For manual make: fragments are passed as args later
           if [ "$USE_BUILD_SCRIPT" == "true" ]; then
             for cfg in su.config perf.config nethunter.config custom.config; do
               TOGGLE_VAR=""
@@ -537,7 +569,6 @@ jobs:
             done
           fi
 
-          # Remove check_defconfig
           [ -f "build.config.gki" ] && sed -i 's/check_defconfig//' build.config.gki || true
 
       - name: ✏️ Customize Kernel Name
@@ -549,13 +580,11 @@ jobs:
             sed -i "\$s|echo \"\\\$res\"|echo \"\\\$res${SUFFIX}\"|" scripts/setlocalversion
           fi
 
-          # Fixed build timestamp
           if [ -f "scripts/mkcompile_h" ]; then
             BTIME=$(date -u '+%a %b %d %H:%M:%S UTC %Y')
             perl -pi -e "s{UTS_VERSION=\"\\\$\\(echo \\\$UTS_VERSION \\\$CONFIG_FLAGS \\\$TIMESTAMP \\| cut -b -\\\$UTS_LEN\\)\"}{UTS_VERSION=\"#1 SMP PREEMPT ${BTIME}\"}" scripts/mkcompile_h 2>/dev/null || true
           fi
 
-          # Remove ABI exports
           rm -rf android/abi_gki_protected_exports_* 2>/dev/null || true
           [ -f "BUILD.bazel" ] && perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' BUILD.bazel 2>/dev/null || true
 
