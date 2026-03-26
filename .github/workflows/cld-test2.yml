@@ -11,19 +11,36 @@ on:
         description: 'Kernel Branch'
         required: true
         default: 'SM-M146B-Oneui7-ADYJ2'
+
+      # --- BUILD METHOD (separate from toolchain) ---
       BUILD_METHOD:
         description: 'Build Method'
         type: choice
         options:
-          - 'build_kernel.sh (LTO=thin)'
-          - 'build_kernel.sh (LTO=full)'
-          - 'build_kernel.sh (LTO=none)'
-          - 'Manual make - clang-r487747c (AOSP 14)'
-          - 'Manual make - clang-r450784d (AOSP 13)'
-          - 'Manual make - WildKernels Toolchain (symlink-safe)'
-          - 'Manual make - clang-22 (LLVM APT)'
-          - 'Manual make - clang-20 (Neutron)'
-        default: 'build_kernel.sh (LTO=thin)'
+          - 'build_kernel.sh (Samsung OEM Script)'
+          - 'Manual make (Custom Toolchain)'
+        default: 'build_kernel.sh (Samsung OEM Script)'
+      LTO_TYPE:
+        description: 'LTO Type (only for build_kernel.sh)'
+        type: choice
+        options:
+          - 'thin'
+          - 'full'
+          - 'none'
+        default: 'thin'
+
+      # --- TOOLCHAIN (separate from build method) ---
+      CLANG_VERSION:
+        description: 'Compiler Toolchain (only for Manual make)'
+        type: choice
+        options:
+          - 'WildKernels (symlink-safe sparse-checkout)'
+          - 'clang-r487747c (AOSP 14)'
+          - 'clang-r450784d (AOSP 13)'
+          - 'clang-22 (LLVM APT)'
+          - 'clang-20 (Neutron)'
+        default: 'clang-r487747c (AOSP 14)'
+
       DEVICE:
         description: 'Device Codename'
         required: true
@@ -170,7 +187,7 @@ jobs:
             https://github.com/WildKernels/AnyKernel3.git ${GITHUB_WORKSPACE}/AnyKernel3
 
       # ==========================================
-      # TOOLCHAIN (only for Manual make)
+      # PARSE BUILD METHOD
       # ==========================================
 
       - name: 🔧 Parse Build Method
@@ -179,35 +196,39 @@ jobs:
 
           if [[ "$METHOD" == *"build_kernel.sh"* ]]; then
             echo "USE_BUILD_SCRIPT=true" >> $GITHUB_ENV
-            LTO=$(echo "$METHOD" | grep -oP 'LTO=\K[a-z]+')
-            echo "LTO_TYPE=${LTO:-thin}" >> $GITHUB_ENV
+            echo "LTO_TYPE=${{ github.event.inputs.LTO_TYPE }}" >> $GITHUB_ENV
+            echo ">>> Build method: Samsung OEM script (LTO=${{ github.event.inputs.LTO_TYPE }})"
           else
             echo "USE_BUILD_SCRIPT=false" >> $GITHUB_ENV
-            echo "MANUAL_COMPILER=$METHOD" >> $GITHUB_ENV
+            echo ">>> Build method: Manual make with ${{ github.event.inputs.CLANG_VERSION }}"
           fi
 
-      - name: 🔧 Setup Toolchain
+      # ==========================================
+      # TOOLCHAIN (only for Manual make)
+      # ==========================================
+
+      - name: 🔧 Setup Toolchain (${{ github.event.inputs.CLANG_VERSION }})
         if: env.USE_BUILD_SCRIPT == 'false'
         run: |
           set -euo pipefail
           mkdir -p ${GITHUB_WORKSPACE}/toolchains
           cd ${GITHUB_WORKSPACE}/toolchains
 
-          CHOICE="${MANUAL_COMPILER}"
+          CHOICE="${{ github.event.inputs.CLANG_VERSION }}"
 
           if [[ "$CHOICE" == *"WildKernels"* ]]; then
             echo ">>> Fetching WildKernels toolchain via sparse-checkout (preserves symlinks)..."
 
-            # Step 1: Sparse clone — only metadata, no file blobs yet
+            # Sparse clone — downloads only metadata, no blobs yet
             git clone --filter=blob:none --sparse \
               -b SM-M146B-Oneui7-ADYJ2 \
               https://github.com/WildKernels/Samsung_Kernels.git wild_sparse
             cd wild_sparse
 
-            # Step 2: Request ONLY the toolchain folder
+            # Request ONLY the toolchain folder
             git sparse-checkout set toolchain
 
-            # Step 3: Extract any tar.xz archives inside toolchain/
+            # Extract any tar.xz archives inside toolchain/
             if [ -d "toolchain" ]; then
               find toolchain -type f -name '*.tar.xz' -print0 | while IFS= read -r -d '' archive; do
                 echo ">>> Extracting: $archive"
@@ -218,10 +239,10 @@ jobs:
 
             cd ${GITHUB_WORKSPACE}/toolchains
 
-            # Step 4: Copy with -a flag (PRESERVES symlinks, permissions, timestamps)
+            # cp -a PRESERVES symlinks, permissions, timestamps
             cp -a wild_sparse/toolchain ./toolchain
 
-            # Step 5: Find clang binary (check real files AND symlinks)
+            # Find clang binary (check real files AND symlinks)
             CLANG_BIN=$(find ./toolchain -name "clang" \( -type f -o -type l \) | head -n 1)
 
             if [ -n "$CLANG_BIN" ]; then
@@ -235,15 +256,12 @@ jobs:
               ls -la "$ABS_DIR"/clang* 2>/dev/null | head -5
               file "$CLANG_BIN"
             else
-              echo "🚨 ERROR: clang binary not found in toolchain!"
-              echo ">>> Toolchain directory structure:"
+              echo "🚨 ERROR: clang not found in toolchain!"
               find ./toolchain -maxdepth 4 -type d | head -30
-              echo ">>> All executables found:"
-              find ./toolchain -type f -executable -name "clang*" -o -type l -name "clang*" 2>/dev/null | head -10
               exit 1
             fi
 
-            # Cleanup: remove the sparse clone, keep only the clean copy
+            # Cleanup sparse clone
             rm -rf wild_sparse
 
           elif [[ "$CHOICE" == *"r487747c"* ]]; then
@@ -614,7 +632,7 @@ jobs:
               echo "🚨 No build script found!" && exit 1
             fi
           else
-            echo ">>> Building with manual make..."
+            echo ">>> Building with manual make + ${{ github.event.inputs.CLANG_VERSION }}..."
             mkdir -p ${OUTDIR}
             export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
             export CC="${COMPILER_CC}" LD=ld.lld
@@ -723,6 +741,8 @@ jobs:
           | **Device** | ${{ github.event.inputs.DEVICE }} |
           | **Branch** | ${{ github.event.inputs.KERNEL_BRANCH }} |
           | **Build Method** | ${{ github.event.inputs.BUILD_METHOD }} |
+          | **Toolchain** | ${{ github.event.inputs.CLANG_VERSION }} |
+          | **LTO** | ${{ github.event.inputs.LTO_TYPE }} |
           | **Root Manager** | ${{ github.event.inputs.ROOT_MANAGER }} |
           | **KSU Version** | ${KSU_VERSION:-unknown} (${KSU_VERSION_TAG:-unknown}) |
           | **SUSFS** | ${{ github.event.inputs.ENABLE_SUSFS }} |
