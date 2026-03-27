@@ -11,10 +11,6 @@ on:
         description: 'Kernel Branch'
         required: true
         default: 'SM-M146B-Oneui7-ADYJ2'
-      SUSFS_BRANCH:
-        description: 'SUSFS Branch (for base files)'
-        required: true
-        default: 'gki-android13-5.15'
       SUSFS_DEVICE_FIXES_PATH:
         description: 'Path to device fix patches'
         required: true
@@ -36,21 +32,6 @@ jobs:
           echo ">>> Cloning Kernel..."
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} \
             ${{ github.event.inputs.KERNEL_SOURCE }} kernel_workspace
-
-      - name: 🧩 Fetch SUSFS Base Source Files
-        run: |
-          echo ">>> Fetching SUSFS files..."
-          git clone -b ${{ github.event.inputs.SUSFS_BRANCH }} \
-            https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
-          
-          cd susfs4ksu
-          # Pin to known good commit for android13-5.15
-          git checkout f20b72ca8c5214275af2cd969c58d8054a761353
-          cd ..
-
-          # Copy fs and include files into kernel workspace
-          cp -r susfs4ksu/kernel_patches/fs/* kernel_workspace/fs/ 2>/dev/null || true
-          cp -r susfs4ksu/kernel_patches/include/linux/* kernel_workspace/include/linux/ 2>/dev/null || true
 
       - name: ⬇️ Download Custom Patches
         run: |
@@ -81,9 +62,7 @@ jobs:
           echo "       🧪 PATCH SEQUENCE TESTER         "
           echo "========================================"
           
-          # We use a function to test the dry-run first.
-          # NOTE: If the dry run passes, we MUST apply it so the next patch 
-          # in the sequence has the correct updated code to hook into!
+          # Function to test dry-run and apply if clean
           test_and_apply() {
             local p_file=$1
             echo -e "\n---> Testing: $p_file"
