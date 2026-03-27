@@ -33,11 +33,14 @@ jobs:
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} \
             ${{ github.event.inputs.KERNEL_SOURCE }} kernel_workspace
 
-      - name: 📥 Clone ReSukiSU
+      - name: 📥 Setup ReSukiSU
         run: |
           cd kernel_workspace
           echo ">>> Cloning ReSukiSU..."
           git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+          
+          echo ">>> Running ReSukiSU setup.sh..."
+          curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
       - name: ⬇️ Download Custom Enginex0 Patches
         run: |
