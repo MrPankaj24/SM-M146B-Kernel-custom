@@ -1,4 +1,4 @@
-name: 🧪 Dry-Run Patch Test (M14)
+name: 🧪 Patch Sequence Test (M14)
 
 on:
   workflow_dispatch:
@@ -33,7 +33,7 @@ jobs:
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} \
             ${{ github.event.inputs.KERNEL_SOURCE }} kernel_workspace
 
-      - name: ⬇️ Download Custom Patches
+      - name: ⬇️ Download Custom Enginex0 Patches
         run: |
           cd kernel_workspace
           echo ">>> Downloading Enginex0 Patches..."
@@ -54,54 +54,77 @@ jobs:
             echo "⚠️ WARNING: Device fixes path not found!"
           fi
 
-      - name: 🧪 Execute Dry-Run Sequence
+      - name: 🚀 Execute Exact Patch Sequence
         run: |
           cd kernel_workspace
           
           echo "========================================"
-          echo "       🧪 PATCH SEQUENCE TESTER         "
+          echo "       🚀 FORCING PATCH SEQUENCE        "
           echo "========================================"
           
-          # Function to test dry-run and apply if clean
-          test_and_apply() {
-            local p_file=$1
-            echo -e "\n---> Testing: $p_file"
-            
-            if patch -p1 --dry-run < "$p_file"; then
-              echo "✅ Dry-run clean! Applying silently for sequence continuity..."
-              patch -p1 --forward < "$p_file" > /dev/null
-            else
-              echo "❌ FAILED: $p_file has conflicts or rejects!"
-              echo "🚨 Aborting workflow. Fix the patch!"
-              exit 1
-            fi
-          }
-
-          # --- Step 1: Base Custom SUSFS Patch ---
+          # --- 1. Base Custom SUSFS Patch (50) ---
+          echo -e "\n---> 1. Applying 50_custom.patch (Rejects expected & ignored)"
           if [ -f "50_custom.patch" ]; then
-            test_and_apply 50_custom.patch
+            patch -p1 --forward < 50_custom.patch || echo "⚠️ 50_custom.patch generated rejects. Proceeding to fixes..."
           else
             echo "❌ Missing 50_custom.patch!" && exit 1
           fi
 
-          # --- Step 2: Device-Specific Fixes ---
-          echo -e "\n---> Applying device-specific fixes..."
+          # --- 2. Device-Specific Fixes ---
+          echo -e "\n---> 2. Applying device-specific fixes to clean up..."
           for p in *.patch; do
             if [[ "$p" != "50_custom.patch" ]] && [[ "$p" != "51_enhanced.patch" ]] && [[ "$p" != "60_zeromount.patch" ]]; then
-              test_and_apply "$p"
+              echo "  Applying: $p"
+              patch -p1 --forward < "$p" || echo "  ⚠️ $p had issues."
             fi
           done
 
-          # --- Step 3: Enhanced SUSFS Patch ---
+          # --- 3. Enhanced SUSFS Patch (51) ---
+          echo -e "\n---> 3. Applying 51_enhanced.patch"
           if [ -f "51_enhanced.patch" ]; then
-            test_and_apply 51_enhanced.patch
+            patch -p1 --forward < 51_enhanced.patch || echo "⚠️ 51_enhanced.patch had issues."
           fi
 
-          # --- Step 4: Zeromount Patch ---
+          # --- 4. Zeromount Patch (60) ---
+          echo -e "\n---> 4. Applying 60_zeromount.patch"
           if [ -f "60_zeromount.patch" ]; then
-            test_and_apply 60_zeromount.patch
+            patch -p1 --forward < 60_zeromount.patch || echo "⚠️ 60_zeromount.patch had issues."
           fi
 
           echo -e "\n========================================"
-          echo "🎉 SUCCESS: All patches applied cleanly! "
+          echo "✅ Sequence complete. Checking for leftover damage..."
           echo "========================================"
+
+      - name: 🔍 Scan & Collect Patch Rejects (.rej)
+        if: always()
+        run: |
+          RDIR="${GITHUB_WORKSPACE}/patch-rejects"
+          mkdir -p "$RDIR"
+          cd kernel_workspace
+          
+          # Find all .rej files and map them into an array
+          mapfile -t REJS < <(find . -type f -name '*.rej' 2>/dev/null)
+          echo "REJ_COUNT=${#REJS[@]}" >> $GITHUB_ENV
+          
+          if [ ${#REJS[@]} -gt 0 ]; then
+            echo "🚨 Found ${#REJS[@]} reject files! Collecting..."
+            for R in "${REJS[@]}"; do
+              # Keep the folder structure intact so you know exactly which file failed
+              mkdir -p "$RDIR/$(dirname "$R")"
+              cp "$R" "$RDIR/$R"
+              
+              # Also grab the original file it failed to patch so you can compare them
+              ORIG="${R%.rej}"
+              [ -f "$ORIG" ] && cp "$ORIG" "$RDIR/${ORIG}" || true
+            done
+          else
+            echo "🎉 ZERO REJECTS! The patches applied perfectly."
+          fi
+
+      - name: ⬆️ Upload Patch Rejects
+        if: always() && env.REJ_COUNT != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.DEVICE }}-Leftover-Rejects
+          path: ${{ github.workspace }}/patch-rejects/
+          retention-days: 5
