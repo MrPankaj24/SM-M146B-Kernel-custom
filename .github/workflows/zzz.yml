@@ -1,4 +1,4 @@
-name: 🏗️Zero M14 ReSukiSU Kernel Build
+name: 🏗️ Zero M14 ReSukiSU Kernel Build
 
 permissions:
   contents: write
@@ -26,7 +26,7 @@ env:
 
 jobs:
   build-m14:
-    name: "Build ${{ env.BRANCH }}"
+    name: "Build SM-M146B"
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -54,11 +54,11 @@ jobs:
       - name: 📥 Clone Kernel Source
         run: |
           echo ">>> Cloning Kernel Source..."
-          git clone --depth 1 -b ${{ env.BRANCH }} --single-branch https://github.com/WildKernels/Samsung_Kernels.git ${{ env.CONFIG_DIR }}
+          git clone --depth 1 -b $BRANCH --single-branch https://github.com/WildKernels/Samsung_Kernels.git $CONFIG_DIR
 
       - name: 📦 Extract tar.xz Archives
         run: |
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           find . -type f -name '*.tar.xz' -print0 | while IFS= read -r -d '' file; do
             echo "Extracting $file"
             tar -xf "$file"
@@ -70,7 +70,7 @@ jobs:
       # ==========================================
       - name: 🛡️ Setup ReSukiSU
         run: |
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           echo ">>> Cloning ReSukiSU..."
           git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           
@@ -88,7 +88,7 @@ jobs:
       # ==========================================
       - name: 🧩 Execute SUSFS Patch Sequence
         run: |
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           
           echo ">>> Downloading Custom Enginex0 Patches..."
           curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/50_add_susfs_in_gki-android13-5.15.patch" -o 50_custom.patch
@@ -96,7 +96,7 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/60_zeromount-android13-5.15.patch" -o 60_zeromount.patch
 
           echo ">>> Staging Device Fixes..."
-          cp ../custom_patches/samsung/${{ env.BRANCH }}/*.patch ./ 2>/dev/null || true
+          cp ../custom_patches/samsung/$BRANCH/*.patch ./ 2>/dev/null || true
 
           echo -e "\n---> 1. Applying 50_custom.patch"
           patch -p1 --forward < 50_custom.patch || echo "⚠️ 50_custom.patch generated rejects. Proceeding to fixes..."
@@ -120,7 +120,7 @@ jobs:
       # ==========================================
       - name: 🔒 Add Baseband Guard (BBG)
         run: |          
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           echo ">>> Adding BBG..."
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
           echo "CONFIG_BBG=y" >> arch/arm64/configs/s5e8535-m14xnsxx_defconfig
@@ -137,7 +137,7 @@ jobs:
       - name: ⚙️ Set Kernel Configuration Variables
         run: |
           echo ">>> Injecting Custom Configs into Defconfig..."
-          cat >> "${{ env.DEFCONFIG }}" << 'EOF'
+          cat >> "$DEFCONFIG" << 'EOF'
           
           # === CORE ROOT/SUSFS ===
           CONFIG_KSU_SUSFS=y
@@ -207,12 +207,12 @@ jobs:
           CONFIG_KALLSYMS_ALL=y
           EOF
 
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           sed -i 's/check_defconfig//' ./build.config.gki
 
       - name: ✏️ Change Kernel Name & Clean
         run: |
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           sed -i '$s|echo "\$res"|echo "\$res-ReSukiSU"|' ./scripts/setlocalversion
           sed -i 's/-dirty//' ./scripts/setlocalversion
           perl -pi -e 's{UTS_VERSION="\$\(echo \$UTS_VERSION \$CONFIG_FLAGS \$TIMESTAMP \| cut -b -\$UTS_LEN\)"}{UTS_VERSION="#1 SMP PREEMPT Sun Apr 20 04:20:00 UTC 2025"}' ./scripts/mkcompile_h
@@ -224,7 +224,7 @@ jobs:
       # ==========================================
       - name: 🔨 Build Kernel (M14)
         run : |
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           echo ">>> Installing dependencies and building..."
           sudo apt update
           sudo apt-get install -y libyaml-dev
@@ -234,30 +234,34 @@ jobs:
       # ==========================================
       # 6. PACKAGING & ARTIFACTS
       # ==========================================
-      - name: 📦 Prepare AnyKernel3
+      - name: 📦 Prepare AnyKernel3 (Create Flashable ZIP)
         run: |
-          IMAGE_PATH="./${{ env.CONFIG_DIR }}/arch/arm64/boot/Image"
+          IMAGE_PATH="./$CONFIG_DIR/arch/arm64/boot/Image"
           if [ -f "$IMAGE_PATH" ]; then
             cp "$IMAGE_PATH" ./AnyKernel3/Image
             echo "✅ Image successfully copied to AnyKernel3"
+            
+            cd AnyKernel3
+            zip -r9 "../M14-ReSukiSU-Kernel.zip" *
+            cd ..
           else
             echo "🚨 Error: Kernel Image not found at $IMAGE_PATH"
             exit 1
           fi
 
-      - name: ⬆️ Upload AnyKernel3 Artifact
+      - name: ⬆️ Upload Kernel ZIP Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BRANCH }}-AnyKernel3
-          path: ./AnyKernel3/**
-          compression-level: 9
+          name: ${{ env.BRANCH }}-Kernel-ZIP
+          path: ./M14-ReSukiSU-Kernel.zip
+          compression-level: 0
 
       - name: 🔍 Scan & Collect Patch Rejects
         if: always()
         run: |
           RDIR="${GITHUB_WORKSPACE}/patch-rejects"
           mkdir -p "$RDIR"
-          cd ${{ env.CONFIG_DIR }}
+          cd $CONFIG_DIR
           mapfile -t REJS < <(find . -type f -name '*.rej' 2>/dev/null)
           echo "REJ_COUNT=${#REJS[@]}" >> $GITHUB_ENV
           if [ ${#REJS[@]} -gt 0 ]; then
@@ -286,7 +290,7 @@ jobs:
         with:
           tag_name: M14-ReSukiSU-${{ github.run_number }}
           name: ${{ env.RELEASE_NAME }}
-          files: ./AnyKernel3/**
+          files: ./M14-ReSukiSU-Kernel.zip
           body: |
             **IMPORTANT DISCLAIMER**
             This software is provided for testing and educational purposes only. Use at your own risk.
