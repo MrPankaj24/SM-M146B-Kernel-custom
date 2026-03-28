@@ -71,16 +71,20 @@ jobs:
       - name: 🛡️ Setup ReSukiSU
         run: |
           cd $CONFIG_DIR
+          
           echo ">>> Cloning ReSukiSU..."
           git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           
           echo ">>> Running ReSukiSU setup.sh..."
           curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
 
-          echo ">>> Fetching and applying 70_ksu_safety patch..."
-          curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/70_ksu_safety-resukisu-5.15.patch" -o 70_ksu_safety.patch
+          echo ">>> Fetching 70_ksu_safety patch..."
+          # Download the patch directly into the newly cloned KernelSU directory
+          curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/70_ksu_safety-resukisu-5.15.patch" -o KernelSU/70_ksu_safety.patch
+          
+          echo ">>> Applying patch inside KernelSU..."
           cd KernelSU
-          patch -p1 --forward < ../70_ksu_safety.patch || echo "⚠️ 70_ksu_safety.patch had issues."
+          patch -p1 < 70_ksu_safety.patch
           cd ..
 
       # ==========================================
