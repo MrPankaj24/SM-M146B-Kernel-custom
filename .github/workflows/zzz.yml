@@ -18,11 +18,13 @@ on:
 
 env:
   BRANCH: "SM-M146B-Oneui7-ADYJ2"
-  ANDROID_VERSION: "android13"
+  # Change ANDROID_VERSION to something else, or simply delete this line!
+  AOSP_VERSION: "android13" 
   KERNEL_VERSION: "5.15"
   CONFIG_DIR: "SM-M146B-Oneui7-ADYJ2-android13-5.15"
   DEFCONFIG: "SM-M146B-Oneui7-ADYJ2-android13-5.15/arch/arm64/configs/s5e8535-m14xnsxx_defconfig"
   RELEASE_NAME: "M14 Custom Kernel (ReSukiSU + SUSFS Latest)"
+
 
 jobs:
   build-m14:
