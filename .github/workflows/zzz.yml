@@ -146,19 +146,36 @@ jobs:
           echo ">>> Injecting Custom Configs into Defconfig..."
           cat >> "$DEFCONFIG" << 'EOF'
           
-          # === CORE ROOT/SUSFS ===
-          CONFIG_KSU_SUSFS=y
+          # === KERNEL SU ===
           CONFIG_KPROBES=y
           CONFIG_KPROBE_EVENTS=y
           CONFIG_HAVE_KPROBES=y
+          CONFIG_KSU_TRACEPOINT_HOOK=n
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU=y
+          CONFIG_KSU_MULTI_MANAGER_SUPPORT=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_LOG_BUF_SHIFT=20
-          
-          # === SUSFS KSTAT EXTENSIONS ===
+
+          # === SUSFS CONFIGURATION ===
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT=y
           CONFIG_KSU_SUSFS_SUS_KSTAT_REDIRECT=y
-          
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+
           # === ROOT PROTECTION REMOVAL ===
           CONFIG_UH=n
           CONFIG_UH_RKP=n
@@ -172,8 +189,8 @@ jobs:
           CONFIG_RKP=n
           CONFIG_KDP_NS=n
           CONFIG_KDP=n
-          
-          # === FORCE LOAD MODULES ===
+
+          # === FORCE LOAD KERNEL MODULES ===
           CONFIG_MODULES=y
           CONFIG_MODULE_FORCE_LOAD=y
           CONFIG_MODULE_UNLOAD=y
@@ -184,8 +201,7 @@ jobs:
           CONFIG_MODULE_COMPRESS=n
           CONFIG_TRIM_UNUSED_KSYMS=n
 
-          # === USER CUSTOM BASE CONFIGS ===
-          CONFIG_KSU=y
+          # === USER CUSTOM BASE CONFIGS (Network) ===
           CONFIG_IP_NF_TARGET_TTL=y
           CONFIG_IP6_NF_TARGET_HL=y
           CONFIG_IP6_NF_MATCH_HL=y
@@ -220,7 +236,7 @@ jobs:
 
           cd $CONFIG_DIR
           sed -i 's/check_defconfig//' ./build.config.gki
-
+          
       - name: ✏️ Change Kernel Name & Clean
         run: |
           cd $CONFIG_DIR
