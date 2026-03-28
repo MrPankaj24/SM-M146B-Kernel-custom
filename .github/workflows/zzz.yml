@@ -103,6 +103,9 @@ jobs:
           echo ">>> Downloading your extracted kstat_redirect patch..."
           curl -LSs "https://raw.githubusercontent.com/MrPankaj24/SM-M146B-Kernel-custom/main/temp/53_add_kstat_redirect-android13-5.15.patch" -o 53_add_kstat_redirect.patch
 
+          echo ">>> Downloading zeromount patch..."
+          curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/60_zeromount-android13-5.15.patch" -o 60_zeromount.patch
+
           echo ">>> Staging Device Fixes..."
           cp ../custom_patches/samsung/$BRANCH/*.patch ./ 2>/dev/null || true
 
@@ -111,7 +114,7 @@ jobs:
 
           echo -e "\n---> 2. Applying device-specific fixes..."
           for p in *.patch; do
-            if [[ "$p" != "50_custom.patch" ]] && [[ "$p" != "53_add_kstat_redirect.patch" ]] && [[ "$p" != "70_ksu_safety.patch" ]]; then
+            if [[ "$p" != "50_custom.patch" ]] && [[ "$p" != "53_add_kstat_redirect.patch" ]] && [[ "$p" != "60_zeromount.patch" ]] && [[ "$p" != "70_ksu_safety.patch" ]]; then
               echo "  Applying: $p"
               patch -p1 --forward < "$p" || echo "  ⚠️ $p had issues."
             fi
@@ -119,6 +122,9 @@ jobs:
 
           echo -e "\n---> 3. Applying 53_add_kstat_redirect.patch"
           patch -p1 --forward < 53_add_kstat_redirect.patch || echo "⚠️ 53_add_kstat_redirect.patch had issues."
+
+          echo -e "\n---> 4. Applying 60_zeromount.patch"
+          patch -p1 --forward < 60_zeromount.patch || echo "⚠️ 60_zeromount.patch had issues."
 
       # ==========================================
       # 3. BBG SETUP
