@@ -98,7 +98,7 @@ jobs:
           cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
           
           echo ">>> Extracting 50_add_susfs_in_gki patch..."
-          cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15/50_add_susfs_in_gki-android13-5.15.patch ./50_custom.patch
+          cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch ./50_custom.patch
           
           echo ">>> Downloading your extracted kstat_redirect patch..."
           curl -LSs "https://raw.githubusercontent.com/MrPankaj24/SM-M146B-Kernel-custom/main/temp/53_add_kstat_redirect-android13-5.15.patch" -o 53_add_kstat_redirect.patch
