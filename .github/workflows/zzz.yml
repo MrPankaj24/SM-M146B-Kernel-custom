@@ -263,6 +263,11 @@ jobs:
           echo ">>> Installing dependencies and building..."
           sudo apt update
           sudo apt-get install -y libyaml-dev
+          
+          # ---> THIS IS THE NEW LINE <---
+          echo ">>> Updating PLATFORM_VERSION to 15 in build_kernel.sh..."
+          sed -i 's/export PLATFORM_VERSION=13/export PLATFORM_VERSION=15/g' build_kernel.sh
+          
           chmod +x build_kernel.sh
           LTO=thin ./build_kernel.sh || true
 
