@@ -22,7 +22,7 @@ env:
   KERNEL_VERSION: "5.15"
   CONFIG_DIR: "SM-M146B-Oneui7-ADYJ2-android13-5.15"
   DEFCONFIG: "SM-M146B-Oneui7-ADYJ2-android13-5.15/arch/arm64/configs/s5e8535-m14xnsxx_defconfig"
-  RELEASE_NAME: "M14 Custom Kernel (ReSukiSU + SUSFS v2.0.0)"
+  RELEASE_NAME: "M14 Custom Kernel (ReSukiSU + SUSFS Latest)"
 
 jobs:
   build-m14:
@@ -86,12 +86,19 @@ jobs:
       # ==========================================
       # 2. SUSFS PATCH SEQUENCE
       # ==========================================
-      - name: 🧩 Execute SUSFS Patch Sequence
+      - name: 🧩 Clone SUSFS & Execute Patch Sequence
         run: |
           cd $CONFIG_DIR
           
-          echo ">>> Downloading Official Enginex0 Patch..."
-          curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/50_add_susfs_in_gki-android13-5.15.patch" -o 50_custom.patch
+          echo ">>> Cloning Official SUSFS from GitLab..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15 susfs4ksu
+          
+          echo ">>> Copying SUSFS files to Kernel Tree..."
+          cp -r susfs4ksu/kernel_patches/fs/* fs/
+          cp -r susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          echo ">>> Extracting 50_add_susfs_in_gki patch..."
+          cp susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15/50_add_susfs_in_gki-android13-5.15.patch ./50_custom.patch
           
           echo ">>> Downloading your extracted kstat_redirect patch..."
           curl -LSs "https://raw.githubusercontent.com/MrPankaj24/SM-M146B-Kernel-custom/main/temp/53_add_kstat_redirect-android13-5.15.patch" -o 53_add_kstat_redirect.patch
@@ -99,7 +106,7 @@ jobs:
           echo ">>> Staging Device Fixes..."
           cp ../custom_patches/samsung/$BRANCH/*.patch ./ 2>/dev/null || true
 
-          echo -e "\n---> 1. Applying 50_custom.patch"
+          echo -e "\n---> 1. Applying 50_custom.patch (Official)"
           patch -p1 --forward < 50_custom.patch || echo "⚠️ 50_custom.patch generated rejects. Proceeding to fixes..."
 
           echo -e "\n---> 2. Applying device-specific fixes..."
@@ -301,6 +308,6 @@ jobs:
             - **Device:** SM-M146B (M14)
             - **Kernel:** 5.15
             - **Manager:** ReSukiSU (with Safety Patch)
-            - **SUSFS:** v2.0.0 (Official Base + kstat_redirect)
+            - **SUSFS:** Official Latest + kstat_redirect
             - **BBG:** Enabled
             - **Network/TCP:** BBR, Westwood, FQ enabled
