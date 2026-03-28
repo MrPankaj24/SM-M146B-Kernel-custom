@@ -153,6 +153,11 @@ jobs:
         run: |
           echo ">>> Injecting Custom Configs into Defconfig..."
           cat >> "$DEFCONFIG" << 'EOF'
+
+          # === MAINTAINER INFO ===
+          CONFIG_LOCALVERSION_AUTO=n
+          CONFIG_LOCALVERSION="@MrPankaj24"
+          #CONFIG_DEFAULT_HOSTNAME="MrPankaj24"
           
           # === KERNEL SU ===
           CONFIG_KPROBES=y
