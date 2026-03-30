@@ -263,14 +263,6 @@ jobs:
           rm -rf KernelSU
           git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
           
-          # --- Apply the Safety Patch ---
-          echo ">>> Downloading and applying 70_ksu_safety-resukisu-5.15 patch..."
-          cd KernelSU
-          curl -LSs "https://raw.githubusercontent.com/Enginex0/Super-Builders/main/android13-5.15/ReSukiSU/patches/70_ksu_safety-resukisu-5.15.patch" -o 70_ksu_safety.patch
-          patch -p1 < 70_ksu_safety.patch
-          cd .. # Go back to KERNEL_ROOT
-          # ------------------------------
-
           if [ ! -L "drivers/kernelsu" ]; then
             rm -rf drivers/kernelsu
             ln -sf ../KernelSU drivers/kernelsu
