@@ -58,7 +58,7 @@ jobs:
 
       - name: Clone Kernel Source & Inject SukiSU
         run: |
-          git clone --depth=1 https://github.com/${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}.git kernel_common
+          git clone --depth=1 -b ZeromountP https://github.com/${{ env.KERNEL_REPO_OWNER }}/${{ env.KERNEL_REPO_NAME }}.git kernel_common
           cd kernel_common
           rm -rf KernelSU
           echo "Cloning ReSukiSU..."
