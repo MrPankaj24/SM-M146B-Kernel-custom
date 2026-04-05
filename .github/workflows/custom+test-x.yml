@@ -1,4 +1,4 @@
-name: 🏗️ M14 Kernel Build (SUSFS + ZeroMount + ReSukisu)
+name: 🏗️ll M14 Kernel Build (SUSFS + ZeroMount + ReSukisu)
 on:
   workflow_dispatch:
     inputs:
