@@ -1,4 +1,4 @@
-name: 🏗️ Zero BBG SUSFS RESUKISU (s5e8535 / M14 - Individual Configs)
+name: 🏗️ custom test Zero BBG SUSFS RESUKISU (s5e8535 / M14 - Individual Configs)
 
 on:
   workflow_dispatch:
