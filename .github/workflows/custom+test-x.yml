@@ -289,8 +289,7 @@ jobs:
             git clone https://github.com/rifsxd/KernelSU-Next.git KernelSU
             curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == "wksu" ]]; then
-            echo ">>> Injecting wksu (Wild_KSU dev branch)..."
-            git clone -b dev https://github.com/WildKernels/Wild_KSU.git KernelSU
+            echo ">>> Injecting wksu (Wild_KSU)..."
             curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/dev/kernel/setup.sh" | bash -s wild
           fi
           
