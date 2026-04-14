@@ -291,7 +291,7 @@ jobs:
           elif [[ "$CHOICE" == "wksu" ]]; then
             echo ">>> Injecting wksu (Wild_KSU dev branch)..."
             git clone -b dev https://github.com/WildKernels/Wild_KSU.git KernelSU
-            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/dev/kernel/setup.sh" | bash -s dev
+            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/dev/kernel/setup.sh" | bash -s wild
           fi
           
           if [[ "$CHOICE" != "None" ]]; then
