@@ -19,7 +19,7 @@ on:
           - 'clang-r450784d (AOSP - Android 13 Release)'
           - 'clang-22 (LLVM Official APT Repo)'
           - 'clang-20 (Neutron Toolchain)'
-        default: 'clang-r487747c (AOSP - Android 14 Stable)'
+        default: 'clang-20 (Neutron Toolchain)'
       DEVICE:
         description: 'Device Codename'
         required: true
@@ -289,9 +289,9 @@ jobs:
             git clone https://github.com/rifsxd/KernelSU-Next.git KernelSU
             curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == "wksu" ]]; then
-            echo ">>> Injecting wksu..."
-            git clone https://github.com/Wbtec-br/wksu.git KernelSU
-            curl -LSs "https://raw.githubusercontent.com/Wbtec-br/wksu/main/kernel/setup.sh" | bash
+            echo ">>> Injecting wksu (Wild_KSU dev branch)..."
+            git clone -b dev https://github.com/WildKernels/Wild_KSU.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/dev/kernel/setup.sh" | bash -s dev
           fi
           
           if [[ "$CHOICE" != "None" ]]; then
