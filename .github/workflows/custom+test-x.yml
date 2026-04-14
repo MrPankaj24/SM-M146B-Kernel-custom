@@ -1,4 +1,4 @@
-name: 🏗️ custom test Zero BBG SUSFS RESUKISU (s5e8535 / M14 - Individual Configs)
+name: 🏗️ custom Test Zero BBG SUSFS RESUKISU (s5e8535 / M14 - Individual Configs)
 
 on:
   workflow_dispatch:
@@ -279,15 +279,19 @@ jobs:
           if [[ "$CHOICE" == "ReSukiSU" ]]; then
             echo ">>> Injecting ReSukiSU..."
             git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == *"Official"* ]]; then
             echo ">>> Injecting Official KernelSU..."
             git clone https://github.com/tiann/KernelSU.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == *"Next"* ]]; then
             echo ">>> Injecting KernelSU-Next..."
             git clone https://github.com/rifsxd/KernelSU-Next.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == "wksu" ]]; then
             echo ">>> Injecting wksu..."
             git clone https://github.com/Wbtec-br/wksu.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/Wbtec-br/wksu/main/kernel/setup.sh" | bash
           fi
           
           if [[ "$CHOICE" != "None" ]]; then
