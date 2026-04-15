@@ -292,6 +292,7 @@ jobs:
             echo ">>> Injecting wksu (Wild_KSU)..."
             git clone -b canary https://github.com/WildKernels/Wild_KSU.git KernelSU
             curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s wild
+            
           fi
           
           if [[ "$CHOICE" != "None" ]]; then
