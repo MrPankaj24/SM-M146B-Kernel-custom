@@ -1,4 +1,4 @@
-name: 🏗️ custom Test Zero BBG SUSFS RESUKISU (s5e8535 / M14 - Individual Configs)
+name: 🏗️ custom Test Zero BBG SUSFS (s5e8535 / M14 - Individual Configs)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       KERNEL_BRANCH:
         description: 'Kernel Branch'
         required: true
-        default: 'susfs-2.1.0+zeromount
+        default: 'susfs-2.1.0+zeromount'
       CLANG_VERSION:
         description: 'Select Compiler Toolchain'
         type: choice
