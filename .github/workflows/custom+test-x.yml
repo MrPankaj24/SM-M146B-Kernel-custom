@@ -10,7 +10,7 @@ on:
       KERNEL_BRANCH:
         description: 'Kernel Branch'
         required: true
-        default: 'basic'
+        default: 'susfs-2.1.0+zeromount
       CLANG_VERSION:
         description: 'Select Compiler Toolchain'
         type: choice
@@ -291,6 +291,7 @@ jobs:
           elif [[ "$CHOICE" == "wksu" ]]; then
             echo ">>> Injecting wksu (Wild_KSU)..."
             git clone -b canary https://github.com/WildKernels/Wild_KSU.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/wild/kernel/setup.sh" | bash -s wild
           fi
           
           if [[ "$CHOICE" != "None" ]]; then
