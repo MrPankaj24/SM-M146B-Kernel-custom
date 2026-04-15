@@ -290,7 +290,7 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == "wksu" ]]; then
             echo ">>> Injecting wksu (Wild_KSU)..."
-            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/dev/kernel/setup.sh" | bash -s wild
+            git clone -b canary https://github.com/WildKernels/Wild_KSU.git KernelSU
           fi
           
           if [[ "$CHOICE" != "None" ]]; then
