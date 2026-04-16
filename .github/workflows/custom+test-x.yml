@@ -425,9 +425,15 @@ jobs:
           cd ${MODULES_OUTDIR}
           MODULES_ZIP_NAME="Project24-Modules-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
           
-          # Check if the lib directory exists (where modules are installed) and zip it
+          # Check if the lib directory exists
           if [ -d "lib" ]; then 
-            zip -r9 "${GITHUB_WORKSPACE}/artifacts/${MODULES_ZIP_NAME}" lib/*
+            echo ">>> Cleaning up infinite symlinks..."
+            # This is the magic fix! Deletes the source and build shortcuts.
+            rm -f lib/modules/*/build lib/modules/*/source
+            
+            echo ">>> Zipping module files..."
+            # Added -y flag just to be perfectly safe with any other symlinks
+            zip -r9y "${GITHUB_WORKSPACE}/artifacts/${MODULES_ZIP_NAME}" lib/*
             echo "✅ Modules packed: ${MODULES_ZIP_NAME}"
           else
             echo "⚠️ No modules found to pack!"
