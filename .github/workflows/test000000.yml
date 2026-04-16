@@ -1,0 +1,70 @@
+name: 🧪 Test SUSFS Patch on Official KernelSU
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-patch:
+    name: 🧩 Test Patch Application
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 🧹 Prepare Workspace
+        run: |
+          rm -rf *
+          mkdir -p artifacts
+
+      - name: 📥 Clone Official KernelSU
+        run: |
+          echo ">>> Cloning Official KernelSU repository..."
+          git clone https://github.com/tiann/KernelSU.git KernelSU
+
+      - name: 📥 Fetch Specific SUSFS Patch
+        run: |
+          echo ">>> Cloning simonpunk/susfs4ksu repository (Branch: gki-android13-5.15)..."
+          git clone -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+          
+          cd susfs4ksu
+          echo ">>> Checking out commit: d8358055f3410aa8775bb283d6f1c12fcc13c79d"
+          git checkout d8358055f3410aa8775bb283d6f1c12fcc13c79d
+          cd ..
+          
+          echo ">>> Copying patch file to workspace root..."
+          cp susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+
+      - name: 🛠️ Apply Patch & Check for Rejects
+        run: |
+          cd KernelSU
+          echo ">>> Attempting to apply the SUSFS patch..."
+          
+          # We use || true so the workflow doesn't instantly crash if the patch fails.
+          # This allows us to catch the errors and collect the .rej files.
+          patch -p1 --forward < ../10_enable_susfs_for_ksu.patch > patch_output.log 2>&1 || true
+          
+          echo "--- PATCH OUTPUT LOG ---"
+          cat patch_output.log
+          echo "------------------------"
+          
+          # Check if any reject files were created
+          REJ_COUNT=$(find . -name "*.rej" | wc -l)
+          
+          if [ "$REJ_COUNT" -gt 0 ]; then
+            echo "❌ WARNING: Patch encountered conflicts! $REJ_COUNT .rej file(s) generated."
+            echo "HAS_REJECTS=true" >> $GITHUB_ENV
+            
+            # Move the logs and reject files to the artifacts folder
+            mkdir -p ../artifacts
+            find . -name "*.rej" -exec cp --parents {} ../artifacts/ \;
+            cp patch_output.log ../artifacts/
+          else
+            echo "✅ SUCCESS: Patch applied cleanly with zero rejects!"
+            echo "HAS_REJECTS=false" >> $GITHUB_ENV
+          fi
+
+      - name: ⬆️ Upload Rejects Artifact (If Failed)
+        if: env.HAS_REJECTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SUSFS-Patch-Conflicts
+          path: artifacts/
+          retention-days: 3
