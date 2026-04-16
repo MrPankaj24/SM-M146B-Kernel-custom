@@ -24,7 +24,7 @@ on:
         description: 'Device Codename'
         required: true
         default: 'm14x'
-      
+       
       # --- KERNELSU VARIANT CHOOSER ---
       KSU_VARIANT:
         description: 'Select KernelSU Variant'
@@ -36,13 +36,13 @@ on:
           - 'wksu'
           - 'None'
         default: 'ReSukiSU'
-       
+        
       # --- INDIVIDUAL CONFIG TOGGLES ---
       ENABLE_SU_CONFIG:
         description: 'Enable Generated su.config (KernelSU, SUSFS, Anti-Root Bypass)?'
         type: boolean
         default: true
-       
+        
       ENABLE_PERF_CONFIG:
         description: 'Enable perf.config?'
         type: boolean
@@ -51,7 +51,7 @@ on:
         description: 'URL for perf.config'
         required: false
         default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/perf.config'
-       
+        
       ENABLE_NETHUNTER_CONFIG:
         description: 'Enable nethunter.config?'
         type: boolean
@@ -60,7 +60,7 @@ on:
         description: 'URL for nethunter.config'
         required: false
         default: 'https://github.com/MrPankaj24/kernel_common_modifications/blob/basic/arch/arm64/configs/nethunter.config'
-       
+        
       ENABLE_CUSTOM_CONFIG:
         description: 'Enable custom.config?'
         type: boolean
@@ -118,7 +118,7 @@ jobs:
           set -euo pipefail
           mkdir -p ${GITHUB_WORKSPACE}/toolchains
           cd ${GITHUB_WORKSPACE}/toolchains
-         
+          
           CHOICE="${{ github.event.inputs.CLANG_VERSION }}"
           if [[ "$CHOICE" == *"AOSP"* ]]; then
             CLANG_VER=$(echo "$CHOICE" | awk '{print $1}')
@@ -159,7 +159,7 @@ jobs:
         run: |
           cd ${KERNEL_ROOT}
           echo ">>> Generating new su.config with all SUSFS features forced to 'y'..."
-         
+          
           cat > arch/arm64/configs/su.config << 'EOF'
           #Kernel SU
           CONFIG_KPROBES=y
@@ -240,13 +240,13 @@ jobs:
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
           EOF
-         
+          
           echo "✅ Generated arch/arm64/configs/su.config successfully!"
 
       - name: 📥 Fetch Individual Extra Configs
         run: |
           cd ${KERNEL_ROOT}/arch/arm64/configs/
-         
+          
           download_config() {
             local url="$1"
             local filename="$2"
@@ -260,11 +260,11 @@ jobs:
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then
             download_config "${{ github.event.inputs.PERF_CONFIG_URL }}" "perf.config"
           fi
-         
+          
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ]; then
             download_config "${{ github.event.inputs.NETHUNTER_CONFIG_URL }}" "nethunter.config"
           fi
-         
+          
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ]; then
             download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
           fi
@@ -313,7 +313,7 @@ jobs:
             echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
           fi
           sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
-         
+          
           BBG_C_FILE=$(find . -name "baseband_guard.c" | head -n 1)
           if [ -n "$BBG_C_FILE" ] && grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
             curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
@@ -325,7 +325,7 @@ jobs:
           set -euo pipefail
           cd ${KERNEL_ROOT}
           mkdir -p ${OUTDIR}
-         
+          
           export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
           export CC="${COMPILER_CC}"
           export LD=ld.lld
@@ -334,19 +334,19 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
-         
+          
           # Always start with the base defconfig
           CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig"
-         
+          
           # Append individual configs ONLY if checked and downloaded successfully
           if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
           if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom.config" ]; then CONFIG_ARGS="$CONFIG_ARGS custom.config"; fi
-         
+          
           echo ">>> Generating Base Config using: make $CONFIG_ARGS"
           make O="${OUTDIR}" CC="${CC}" $CONFIG_ARGS
-         
+          
           echo ">>> Compiling Kernel ($(nproc --all) threads)..."
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" 2>&1 | tee build.log
 
@@ -361,15 +361,50 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
 
-      - name: 📦 Package Artifacts
+      - name: 📦 Package Artifacts & AnyKernel3
         run: |
-          mkdir -p ${GITHUB_WORKSPACE}/artifacts/kernel
-          if [ -f ${OUTDIR}/arch/arm64/boot/Image ]; then cp ${OUTDIR}/arch/arm64/boot/Image ${GITHUB_WORKSPACE}/artifacts/kernel/; fi
-          if [ -d "${MODULES_OUTDIR}/lib" ]; then tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/artifacts/modules_out.tgz" lib; fi
+          set -euo pipefail
+          mkdir -p ${GITHUB_WORKSPACE}/artifacts
+          
+          # --- 1. AnyKernel3 Flashable Zip ---
+          echo ">>> Cloning AnyKernel3..."
+          git clone --depth=1 https://github.com/MrPankaj24/AnyKernel3.git ${GITHUB_WORKSPACE}/AnyKernel3
+          
+          echo ">>> Copying Kernel Image to AnyKernel3..."
+          if [ -f "${OUTDIR}/arch/arm64/boot/Image" ]; then
+            cp "${OUTDIR}/arch/arm64/boot/Image" "${GITHUB_WORKSPACE}/AnyKernel3/"
+          else
+            echo "❌ Kernel Image not found!"
+            exit 1
+          fi
+          
+          echo ">>> Creating Flashable Zip..."
+          cd ${GITHUB_WORKSPACE}/AnyKernel3
+          # Clean up repo files before zipping
+          rm -rf .git README.md
+          
+          # Set dynamic Zip Name
+          AK3_ZIP_NAME="Project24-Kernel-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
+          zip -r9 "${GITHUB_WORKSPACE}/artifacts/${AK3_ZIP_NAME}" ./*
+          echo "✅ AnyKernel3 Flashable Zip created: ${AK3_ZIP_NAME}"
+          
+          # --- 2. Raw Files (Image + Modules) Zip ---
+          echo ">>> Packaging raw files..."
+          mkdir -p ${GITHUB_WORKSPACE}/raw_files
+          cp "${OUTDIR}/arch/arm64/boot/Image" "${GITHUB_WORKSPACE}/raw_files/"
+          
+          if [ -d "${MODULES_OUTDIR}/lib" ]; then 
+            tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/raw_files/modules_out.tgz" lib
+          fi
+          
+          cd ${GITHUB_WORKSPACE}/raw_files
+          RAW_ZIP_NAME="Project24-RawFiles-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
+          zip -r9 "${GITHUB_WORKSPACE}/artifacts/${RAW_ZIP_NAME}" ./*
+          echo "✅ Raw files packed: ${RAW_ZIP_NAME}"
 
-      - name: ⬆️ Upload Kernel Package
+      - name: ⬆️ Upload Final Packages
         uses: actions/upload-artifact@v4
         with:
-          name: m14-kernel-${{ github.event.inputs.CLANG_VERSION }}-build
+          name: Project24-M14-${{ github.event.inputs.KSU_VARIANT }}-build
           path: ${{ github.workspace }}/artifacts/
           retention-days: 7
