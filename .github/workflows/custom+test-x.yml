@@ -24,7 +24,7 @@ on:
         description: 'Device Codename'
         required: true
         default: 'm14x'
-       
+        
       # --- KERNELSU VARIANT CHOOSER ---
       KSU_VARIANT:
         description: 'Select KernelSU Variant'
@@ -285,9 +285,9 @@ jobs:
             git clone https://github.com/tiann/KernelSU.git KernelSU
             curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == *"Next"* ]]; then
-            echo ">>> Injecting KernelSU-Next..."
-            git clone https://github.com/rifsxd/KernelSU-Next.git KernelSU
-            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash
+            echo ">>> Injecting KernelSU-Next (dev branch)..."
+            git clone -b dev https://github.com/rifsxd/KernelSU-Next.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev/kernel/setup.sh" | bash
           elif [[ "$CHOICE" == "wksu" ]]; then
             echo ">>> Injecting wksu (Wild_KSU)..."
             git clone -b canary https://github.com/WildKernels/Wild_KSU.git KernelSU
@@ -388,19 +388,18 @@ jobs:
           zip -r9 "${GITHUB_WORKSPACE}/artifacts/${AK3_ZIP_NAME}" ./*
           echo "✅ AnyKernel3 Flashable Zip created: ${AK3_ZIP_NAME}"
           
-          # --- 2. Raw Files (Image + Modules) Zip ---
-          echo ">>> Packaging raw files..."
-          mkdir -p ${GITHUB_WORKSPACE}/raw_files
-          cp "${OUTDIR}/arch/arm64/boot/Image" "${GITHUB_WORKSPACE}/raw_files/"
+          # --- 2. Stripped Modules Zip ---
+          echo ">>> Packaging Stripped Modules..."
+          cd ${MODULES_OUTDIR}
+          MODULES_ZIP_NAME="Project24-Modules-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
           
-          if [ -d "${MODULES_OUTDIR}/lib" ]; then 
-            tar -C "${MODULES_OUTDIR}" -czf "${GITHUB_WORKSPACE}/raw_files/modules_out.tgz" lib
+          # Check if the lib directory exists (where modules are installed) and zip it
+          if [ -d "lib" ]; then 
+            zip -r9 "${GITHUB_WORKSPACE}/artifacts/${MODULES_ZIP_NAME}" lib/*
+            echo "✅ Modules packed: ${MODULES_ZIP_NAME}"
+          else
+            echo "⚠️ No modules found to pack!"
           fi
-          
-          cd ${GITHUB_WORKSPACE}/raw_files
-          RAW_ZIP_NAME="Project24-RawFiles-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
-          zip -r9 "${GITHUB_WORKSPACE}/artifacts/${RAW_ZIP_NAME}" ./*
-          echo "✅ Raw files packed: ${RAW_ZIP_NAME}"
 
       - name: ⬆️ Upload Final Packages
         uses: actions/upload-artifact@v4
