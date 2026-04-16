@@ -1,4 +1,4 @@
-name: 🧪 Test SUSFS Patch on Official KernelSU
+name: 🧪 Test SUSFS Patch on Official KernelSU (Specific SHA)
 
 on:
   workflow_dispatch:
@@ -14,10 +14,15 @@ jobs:
           rm -rf *
           mkdir -p artifacts
 
-      - name: 📥 Clone Official KernelSU
+      - name: 📥 Clone Official KernelSU & Checkout SHA
         run: |
           echo ">>> Cloning Official KernelSU repository..."
           git clone https://github.com/tiann/KernelSU.git KernelSU
+          
+          cd KernelSU
+          echo ">>> Reverting KernelSU to commit 260fafed3c607c552665e094383f327787f332f7..."
+          git checkout 260fafed3c607c552665e094383f327787f332f7
+          cd ..
 
       - name: 📥 Fetch Specific SUSFS Patch
         run: |
@@ -38,7 +43,6 @@ jobs:
           echo ">>> Attempting to apply the SUSFS patch..."
           
           # We use || true so the workflow doesn't instantly crash if the patch fails.
-          # This allows us to catch the errors and collect the .rej files.
           patch -p1 --forward < ../10_enable_susfs_for_ksu.patch > patch_output.log 2>&1 || true
           
           echo "--- PATCH OUTPUT LOG ---"
