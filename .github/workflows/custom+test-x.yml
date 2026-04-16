@@ -290,14 +290,36 @@ jobs:
             echo ">>> Injecting ReSukiSU..."
             git clone https://github.com/ReSukiSU/ReSukiSU.git KernelSU
             curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
+            
           elif [[ "$CHOICE" == *"Official"* ]]; then
-            echo ">>> Injecting Official KernelSU..."
+            echo ">>> Injecting Official KernelSU (Commit: 260fafed3c)..."
             git clone https://github.com/tiann/KernelSU.git KernelSU
-            curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash
+            cd KernelSU
+            git checkout 260fafed3c607c552665e094383f327787f332f7
+            cd ..
+            
+            echo ">>> Fetching SUSFS patch for Official KSU..."
+            git clone -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+            cd susfs4ksu
+            git checkout d8358055f3410aa8775bb283d6f1c12fcc13c79d
+            cd ..
+            
+            echo ">>> Applying SUSFS patch to KernelSU..."
+            cd KernelSU
+            patch -p1 --forward < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+            cd ..
+            
+            echo ">>> Running KSU local setup.sh..."
+            bash KernelSU/kernel/setup.sh
+            
+            echo ">>> Cleaning up patch files..."
+            rm -rf susfs4ksu
+            
           elif [[ "$CHOICE" == *"Next"* ]]; then
             echo ">>> Injecting KernelSU-Next (dev branch)..."
             git clone -b dev https://github.com/rifsxd/KernelSU-Next.git KernelSU
             curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev/kernel/setup.sh" | bash
+            
           elif [[ "$CHOICE" == "wksu" ]]; then
             echo ">>> Injecting wksu (Wild_KSU)..."
             git clone -b canary https://github.com/WildKernels/Wild_KSU.git KernelSU
