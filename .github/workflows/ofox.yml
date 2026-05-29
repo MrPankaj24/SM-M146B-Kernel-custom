@@ -10,11 +10,11 @@ on:
       DEVICE_TREE_URL:
         description: 'GitHub Repo URL of your Device Tree'
         required: true
-        default: 'https://github.com/USERNAME/device_samsung_SM-M146B'
+        default: 'https://github.com/MrPankaj24/twrp_device_samsung_m14x'
       DEVICE_TREE_BRANCH:
         description: 'Device Tree Branch'
         required: true
-        default: 'main'
+        default: 'twrp-12.1'
       DEVICE_PATH:
         description: 'Path of your device tree (e.g. device/samsung/SM-M146B)'
         required: true
