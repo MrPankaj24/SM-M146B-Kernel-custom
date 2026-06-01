@@ -299,6 +299,17 @@ jobs:
           if [[ "$CHOICE" == "ReSukiSU" ]]; then
             echo ">>> Injecting ReSukiSU (Branch: $BRANCH)..."
             curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/$BRANCH/kernel/setup.sh" | sed "s/main/$BRANCH/g" | bash -s "$BRANCH"
+
+            echo ">>> Downloading and applying 70_ksu_safety patch for ReSukiSU..."
+            curl -LSs "https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/70_ksu_safety-resukisu-5.15.patch" -o ksu_safety.patch
+            
+            # Apply patch inside the KernelSU directory
+            cd KernelSU
+            patch -p1 --forward < ../ksu_safety.patch || true
+            cd ..
+            
+            echo ">>> Cleaning up safety patch file..."
+            rm ksu_safety.patch
             
           elif [[ "$CHOICE" == *"Official"* ]]; then
             echo ">>> Injecting Official KernelSU (Branch/Commit: $BRANCH)..."
