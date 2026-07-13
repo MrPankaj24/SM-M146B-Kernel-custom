@@ -24,6 +24,10 @@ on:
         description: 'Device Codename'
         required: true
         default: 'a14x'
+      DEFCONFIG_NAME:
+        description: 'Exact Defconfig File Name (Found in arch/arm64/configs/)'
+        required: true
+        default: 's5e8535-a14xxx_defconfig'
         
       # --- KERNELSU VARIANT CHOOSER ---
       KSU_VARIANT:
@@ -87,7 +91,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     
-    # Required to allow GitHub Actions to create a Release
     permissions:
       contents: write
 
@@ -299,7 +302,6 @@ jobs:
             echo ">>> Downloading and applying 70_ksu_safety patch for ReSukiSU..."
             curl -LSs "https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/70_ksu_safety-resukisu-5.15.patch" -o ksu_safety.patch
             
-            # Apply patch inside the KernelSU directory
             cd KernelSU
             patch -p1 --forward < ../ksu_safety.patch || true
             cd ..
@@ -356,7 +358,6 @@ jobs:
           git clone https://github.com/MrPankaj24/kernel_patch.git temp_patch_repo
           
           echo ">>> Applying ntsync_base.patch..."
-          # We use || true here to prevent GitHub Actions from crashing on harmless rejects like namespace.c
           patch -p1 --forward < temp_patch_repo/ntsync_base.patch || true
           
           echo ">>> Applying ntsync_compat_android13-5.15.patch..."
@@ -369,7 +370,9 @@ jobs:
         run: |
           cd ${KERNEL_ROOT}
           curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE }}_defconfig"
+          
+          # Use the new explicit DEFCONFIG_NAME input here to dynamically inject BBG flags
+          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}"
           if [ -f "$DEFCONFIG_FILE" ]; then
             echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
             echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
@@ -398,10 +401,9 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          # Always start with the base defconfig
-          CONFIG_ARGS="${{ github.event.inputs.DEVICE }}_defconfig"
+          # Switched from dynamic DEVICE_defconfig to exact DEFCONFIG_NAME input
+          CONFIG_ARGS="${{ github.event.inputs.DEFCONFIG_NAME }}"
           
-          # Append individual configs ONLY if checked and downloaded successfully
           if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
           if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi
@@ -429,7 +431,6 @@ jobs:
           set -euo pipefail
           mkdir -p ${GITHUB_WORKSPACE}/artifacts
           
-          # --- 1. AnyKernel3 Flashable Zip ---
           echo ">>> Cloning AnyKernel3..."
           git clone --depth=1 https://github.com/MrPankaj24/AnyKernel3.git ${GITHUB_WORKSPACE}/AnyKernel3
           
@@ -443,27 +444,21 @@ jobs:
           
           echo ">>> Creating Flashable Zip..."
           cd ${GITHUB_WORKSPACE}/AnyKernel3
-          # Clean up repo files before zipping
           rm -rf .git README.md
           
-          # Set dynamic Zip Name
           AK3_ZIP_NAME="Project24-Kernel-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
           zip -r9 "${GITHUB_WORKSPACE}/artifacts/${AK3_ZIP_NAME}" ./*
           echo "✅ AnyKernel3 Flashable Zip created: ${AK3_ZIP_NAME}"
           
-          # --- 2. Stripped Modules Zip ---
           echo ">>> Packaging Stripped Modules..."
           cd ${MODULES_OUTDIR}
           MODULES_ZIP_NAME="Project24-Modules-M14-${{ github.event.inputs.KSU_VARIANT }}.zip"
           
-          # Check if the lib directory exists
           if [ -d "lib" ]; then 
             echo ">>> Cleaning up infinite symlinks..."
-            # This is the magic fix! Deletes the source and build shortcuts.
             rm -f lib/modules/*/build lib/modules/*/source
             
             echo ">>> Zipping module files..."
-            # Added -y flag just to be perfectly safe with any other symlinks
             zip -r9y "${GITHUB_WORKSPACE}/artifacts/${MODULES_ZIP_NAME}" lib/*
             echo "✅ Modules packed: ${MODULES_ZIP_NAME}"
           else
@@ -480,7 +475,6 @@ jobs:
       - name: 🏷️ Format Safe Release Tag
         if: github.event.inputs.MAKE_RELEASE == 'true'
         run: |
-          # Remove spaces and parentheses from the KSU variant name for the Git Tag
           SAFE_VARIANT=$(echo "${{ github.event.inputs.KSU_VARIANT }}" | tr -d ' ()')
           echo "SAFE_TAG=P24-${SAFE_VARIANT}-Run${{ github.run_number }}" >> $GITHUB_ENV
 
@@ -488,27 +482,18 @@ jobs:
         if: github.event.inputs.MAKE_RELEASE == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          # The release title can still have spaces and look nice
           name: Project 24 Kernel (${{ github.event.inputs.KSU_VARIANT }}) - Run ${{ github.run_number }}
-          # The underlying tag will use the safe, spaceless version
           tag_name: ${{ env.SAFE_TAG }}
           body: |
             ### ⚡ Project 24 Kernel
             
             > [!WARNING]
-            > **DISCLAIMER:** This kernel is for experimental purposes. Flash at your own risk! I am not responsible for bootloops, hard-bricked devices, dead SD cards, thermonuclear war, or you getting fired because your alarm app failed. Please make sure you have a working backup before flashing.
-
-            #### ✨ Core Features Included:
-            * **Root Stealth:** Integrated with SUSFS and Zeromount to completely hide root access.
-            * **Cellular Security:** Baseband Guard (BBG) blocks malicious network attacks.
-            * **Virtualization:** Full kernel-level support for LXC, Docker, and Droidspace containers.
-            * **Pentesting:** Native Kali Nethunter compatibility baked in.
+            > **DISCLAIMER:** This kernel is for experimental purposes. Flash at your own risk!
             
             **Device:** ${{ github.event.inputs.DEVICE }}
+            **Defconfig Used:** `${{ github.event.inputs.DEFCONFIG_NAME }}`
             **Toolchain:** ${{ github.event.inputs.CLANG_VERSION }}
             **Root Variant:** ${{ github.event.inputs.KSU_VARIANT }}
-            **Manager Branch:** `${{ github.event.inputs.MANAGER_BRANCH }}`
-            **Kernel Branch Built:** `${{ github.event.inputs.KERNEL_BRANCH }}`
             
             *This release was automatically generated by GitHub Actions.*
           files: |
