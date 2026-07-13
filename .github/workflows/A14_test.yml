@@ -391,6 +391,10 @@ jobs:
           set -euo pipefail
           cd ${KERNEL_ROOT}
           mkdir -p ${OUTDIR}
+
+          # --- ADD THIS LINE TO FIX SAMSUNG's TYPO AUTOMATICALLY ---
+          sed -i 's/static cpn_next_cpu/static int cpn_next_cpu/g' kernel/sched/ems/sysbusy.c
+          # ---------------------------------------------------------
           
           export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
           export CC="${COMPILER_CC}"
