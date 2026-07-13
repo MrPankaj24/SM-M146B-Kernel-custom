@@ -23,7 +23,7 @@ on:
       DEVICE:
         description: 'Device Codename'
         required: true
-        default: 'm14x'
+        default: 'a14x'
         
       # --- KERNELSU VARIANT CHOOSER ---
       KSU_VARIANT:
