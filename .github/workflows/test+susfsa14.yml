@@ -1,0 +1,98 @@
+name: 🧪 SUSFS Patch Tester & Reject Collector
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_BRANCH:
+        description: 'Kernel Source Branch to Test Against'
+        required: true
+        default: 'master'
+      SUSFS_PATCH_URL:
+        description: 'Direct URL to the SUSFS / Kernel patch file (.patch or .diff)'
+        required: true
+        default: 'https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/5.15_susfs.patch'
+      STRIP_LEVEL:
+        description: 'Patch Strip Level (-p1, -p0, etc.)'
+        type: choice
+        options:
+          - '-p1'
+          - '-p0'
+        default: '-p1'
+
+env:
+  KERNEL_SOURCE: 'https://github.com/devhunter1/android_kernel_samsung_s5e8535.git'
+  KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
+  REJECT_DIR: ${{ github.workspace }}/patch_rejects
+
+jobs:
+  test_patch:
+    name: 🔍 Test Patch Application
+    runs-on: ubuntu-24.04
+    
+    steps:
+      - name: 🧹 Prepare Directories
+        run: |
+          rm -rf "${KERNEL_ROOT}" "${REJECT_DIR}"
+          mkdir -p "${KERNEL_ROOT}"
+          mkdir -p "${REJECT_DIR}"
+
+      - name: 📥 Clone Target Kernel Source
+        run: |
+          echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
+          git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ env.KERNEL_SOURCE }} ${KERNEL_ROOT}
+
+      - name: 📥 Download Target Patch File
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Downloading patch from: ${{ github.event.inputs.SUSFS_PATCH_URL }}"
+          curl -LSs "${{ github.event.inputs.SUSFS_PATCH_URL }}" -o test_target.patch
+
+      - name: 🛠️ Apply Patch & Monitor Rejects
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Attempting to apply patch using ${{ github.event.inputs.STRIP_LEVEL }}..."
+          
+          # We append '|| true' so GitHub Actions continues running even if hunks fail
+          patch ${{ github.event.inputs.STRIP_LEVEL }} --forward < test_target.patch || true
+          
+          # Clean up the downloaded patch file so it doesn't get swept into the diagnostics
+          rm -f test_target.patch
+
+      - name: 📁 Collect and Structure Reject (.rej) Files
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Scanning repository for patch reject (.rej) files..."
+          
+          # Find all .rej files and map out how many failed
+          REJ_COUNT=$(find . -name "*.rej" | wc -l)
+          echo "TOTAL_REJECTS=$REJ_COUNT" >> $GITHUB_ENV
+          
+          if [ "$REJ_COUNT" -gt 0 ]; then
+            echo "⚠️ Found $REJ_COUNT rejected hunks! Preserving original directory structure..."
+            
+            # Using rsync to copy files over while keeping their paths intact
+            find . -name "*.rej" -print0 | rsync -0av --files-from=- ./ "${REJECT_DIR}/"
+            
+            echo "✅ All reject files mapped successfully into staging directory."
+          else
+            echo "🎉 Perfect! Patch applies completely clean with 0 rejects."
+            echo "No files to collect."
+          fi
+
+      - name: ⬆️ Upload Patch Rejects Bundle
+        if: env.TOTAL_REJECTS > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: susfs-patch-rejects-branch-${{ github.event.inputs.KERNEL_BRANCH }}
+          path: ${{ env.REJECT_DIR }}/
+          retention-days: 5
+
+      - name: 📊 Status Verdict
+        run: |
+          if [ "${{ env.TOTAL_REJECTS }}" -gt 0 ]; then
+            echo "❌ TEST FAILED: ${{ env.TOTAL_REJECTS }} hunk conflicts detected."
+            echo "Please download the actions artifact zip to see exactly what lines failed."
+            exit 1
+          else
+            echo "🚀 TEST PASSED: Source tree is 100% compatible with this patch layout!"
+          fi
