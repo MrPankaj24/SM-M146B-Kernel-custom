@@ -6,7 +6,7 @@ on:
       KERNEL_BRANCH:
         description: 'Kernel Source Branch to Test Against'
         required: true
-        default: 'master'
+        default: 'lineage-23.2'
       SUSFS_VERSION:
         description: 'Select SUSFS Patch Version to Test'
         type: choice
