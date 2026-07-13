@@ -7,10 +7,13 @@ on:
         description: 'Kernel Source Branch to Test Against'
         required: true
         default: 'master'
-      SUSFS_PATCH_URL:
-        description: 'Direct URL to the SUSFS / Kernel patch file (.patch or .diff)'
-        required: true
-        default: 'https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/5.15_susfs.patch'
+      SUSFS_VERSION:
+        description: 'Select SUSFS Patch Version to Test'
+        type: choice
+        options:
+          - '6.6 (Android 15 / One UI 7)'
+          - '5.15 (Android 13-14 / One UI 6)'
+        default: '6.6 (Android 15 / One UI 7)'
       STRIP_LEVEL:
         description: 'Patch Strip Level (-p1, -p0, etc.)'
         type: choice
@@ -32,7 +35,7 @@ jobs:
     steps:
       - name: 🧹 Prepare Directories
         run: |
-          rm -rf "${KERNEL_ROOT}" "${REJECT_DIR}"
+          rm -rf "${KERNEL_ROOT}" "${REJECT_DIR}" "${GITHUB_WORKSPACE}/susfs4ksu"
           mkdir -p "${KERNEL_ROOT}"
           mkdir -p "${REJECT_DIR}"
 
@@ -41,22 +44,33 @@ jobs:
           echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ env.KERNEL_SOURCE }} ${KERNEL_ROOT}
 
-      - name: 📥 Download Target Patch File
+      - name: 📥 Clone Official SUSFS Repository
         run: |
-          cd ${KERNEL_ROOT}
-          echo ">>> Downloading patch from: ${{ github.event.inputs.SUSFS_PATCH_URL }}"
-          curl -LSs "${{ github.event.inputs.SUSFS_PATCH_URL }}" -o test_target.patch
+          cd ${GITHUB_WORKSPACE}
+          CHOICE="${{ github.event.inputs.SUSFS_VERSION }}"
+          
+          if [[ "$CHOICE" == *"6.6"* ]]; then
+            echo ">>> Cloning official SUSFS 6.6 branch..."
+            git clone --depth=1 -b gki-android15-6.6 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+            echo "PATCH_PATH=susfs4ksu/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" >> $GITHUB_ENV
+          else
+            echo ">>> Cloning official SUSFS 5.15 branch..."
+            git clone --depth=1 -b gki-android13-5.15 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu
+            echo "PATCH_PATH=susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch" >> $GITHUB_ENV
+          fi
 
-      - name: 🛠️ Apply Patch & Monitor Rejects
+      - name: 🛠️ Apply Official Patch & Monitor Rejects
         run: |
           cd ${KERNEL_ROOT}
-          echo ">>> Attempting to apply patch using ${{ github.event.inputs.STRIP_LEVEL }}..."
+          FULL_PATCH_PATH="${GITHUB_WORKSPACE}/${{ env.PATCH_PATH }}"
           
-          # We append '|| true' so GitHub Actions continues running even if hunks fail
-          patch ${{ github.event.inputs.STRIP_LEVEL }} --forward < test_target.patch || true
-          
-          # Clean up the downloaded patch file so it doesn't get swept into the diagnostics
-          rm -f test_target.patch
+          if [ -f "$FULL_PATCH_PATH" ]; then
+            echo ">>> Attempting to apply official patch: ${{ env.PATCH_PATH }}"
+            patch ${{ github.event.inputs.STRIP_LEVEL }} --forward < "$FULL_PATCH_PATH" || true
+          else
+            echo "❌ ERROR: Target patch file not found at $FULL_PATCH_PATH!"
+            exit 1
+          fi
 
       - name: 📁 Collect and Structure Reject (.rej) Files
         run: |
@@ -75,7 +89,7 @@ jobs:
             
             echo "✅ All reject files mapped successfully into staging directory."
           else
-            echo "🎉 Perfect! Patch applies completely clean with 0 rejects."
+            echo "🎉 Perfect! Official SUSFS patch applies completely clean with 0 rejects."
             echo "No files to collect."
           fi
 
@@ -83,7 +97,7 @@ jobs:
         if: env.TOTAL_REJECTS > 0
         uses: actions/upload-artifact@v4
         with:
-          name: susfs-patch-rejects-branch-${{ github.event.inputs.KERNEL_BRANCH }}
+          name: susfs-rejects-${{ github.event.inputs.KERNEL_BRANCH }}
           path: ${{ env.REJECT_DIR }}/
           retention-days: 5
 
@@ -91,8 +105,8 @@ jobs:
         run: |
           if [ "${{ env.TOTAL_REJECTS }}" -gt 0 ]; then
             echo "❌ TEST FAILED: ${{ env.TOTAL_REJECTS }} hunk conflicts detected."
-            echo "Please download the actions artifact zip to see exactly what lines failed."
+            echo "Check your workflow run artifacts to view the exact structural code rejects."
             exit 1
           else
-            echo "🚀 TEST PASSED: Source tree is 100% compatible with this patch layout!"
+            echo "🚀 TEST PASSED: Source tree is 100% compatible with this official SUSFS layout!"
           fi
