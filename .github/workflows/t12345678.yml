@@ -120,13 +120,17 @@ jobs:
       - name: 🧹 Prepare Workspace Directories
         run: |
           set -euo pipefail
+          # Wipe any previous runs so git has a completely clean slate
           rm -rf "${KERNEL_ROOT}"
-          mkdir -p "${KERNEL_ROOT}" "${KERNEL_ROOT}/out" "${KERNEL_ROOT}/modules_out"
 
       - name: 📥 Clone Kernel Source
         run: |
           echo ">>> Cloning Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
+          # Git will automatically create the empty KERNEL_ROOT directory during clone
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
+          
+          # NOW that the repo is cloned, we can safely create our output directories inside it
+          mkdir -p "${OUTDIR}" "${MODULES_OUTDIR}"
 
       - name: 🔧 Setup Compiler Toolchain (${{ github.event.inputs.CLANG_VERSION }})
         run: |
