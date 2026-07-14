@@ -99,18 +99,22 @@ jobs:
         run: |
           echo ">>> Cloning Pre-patched Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
-
+ 
       - name: 🩹 Patch Source Code Errors
         run: |
           cd ${KERNEL_ROOT}
           
-          # Fix missing type specifier in sysbusy.c
+          # Fix 1: Missing type specifier in sysbusy.c
           sed -i 's/static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c
           echo "✅ Patched sysbusy.c missing type specifier!"
           
-          # Fix strict-prototypes error in filemap.c
+          # Fix 2: Strict-prototypes error in filemap.c
           sed -i 's/static void filemap_tracing_mark_end()/static void filemap_tracing_mark_end(void)/' mm/filemap.c
           echo "✅ Patched filemap.c strict-prototypes error!"
+          
+          # Fix 3: Strict-prototypes error in exynos_usb_audio_gic.c
+          sed -i 's/static void exynos_sound_usb_pm_noti_init()/static void exynos_sound_usb_pm_noti_init(void)/' sound/usb/exynos_usb_audio_gic.c
+          echo "✅ Patched exynos_usb_audio_gic.c strict-prototypes error!"
 
       - name: 🧰 Setup Custom Split Toolchain (Clang-14 + LLVM)
         run: |
