@@ -387,12 +387,12 @@ jobs:
           
           echo "✅ Header patch complete!"
 
-      - name: 🔨 Compile Kernel Image
+      - name: 🔨 Compile Exynos Kernel Image
         run: |
           set -euo pipefail
           cd ${KERNEL_ROOT}
           
-          # --- EXYNOS / README REQUIRED ENVIRONMENT VARIABLES ---
+          # --- 1. CORE TOOLCHAIN & ARCH SETUP ---
           export PATH="${COMPILER_PATH}:${TOOLS_PATH}:$PATH"
           export CC="${COMPILER_CC}"
           export LD=ld.lld
@@ -403,9 +403,19 @@ jobs:
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
           
-          #export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
-
-          #export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          # --- 2. ABI & KMI CHECK DESTROYERS (From Reference Script) ---
+          export ABI_DEFINITION=
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export SKIP_ABI_CHECKS=1
+          export KMI_ENFORCE=0
+          
+          # --- 3. OPTIMIZATION & SAMSUNG HOST TOOLS ---
+          export LTO=thin
+          export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
+          export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          
+          # --- 4. SAMSUNG TUI HEADER BUG FIX ---
+          export KCFLAGS="-I${KERNEL_ROOT}/drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP"
           
           # Build config arguments list
           CONFIG_ARGS="${{ github.event.inputs.DEFCONFIG_NAME }}"
@@ -417,10 +427,13 @@ jobs:
           echo ">>> Generating Defconfig using: make $CONFIG_ARGS"
           make O="${OUTDIR}" CC="${CC}" $CONFIG_ARGS
           
+          echo ">>> Running Explicit Prepare Step to prevent race conditions..."
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" prepare
+          
           echo ">>> Compiling Exynos Kernel ($(nproc --all) threads)..."
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" 2>&1 | tee build.log
 
-      - name: 🧩 Compile & Strip Modules
+      - name: 🧩 Compile & Package Modules with Metadata
         run: |
           set -euo pipefail
           cd ${KERNEL_ROOT}
@@ -434,14 +447,29 @@ jobs:
           export LLVM_IAS=1
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
-          #export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
-          #export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          export LTO=thin
+          export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
+          export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          export KCFLAGS="-I${KERNEL_ROOT}/drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP"
           
           echo ">>> Installing and stripping modules..."
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" \
             INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
             INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
-
+            
+          echo ">>> Packaging Stripped Modules + Metadata..."
+          cd ${MODULES_OUTDIR}
+          if [ -d "lib" ]; then 
+            # Remove infinite symlinks that break zip files
+            rm -f lib/modules/*/build lib/modules/*/source
+            
+            # Keep builtin and order files intact as seen in reference script
+            echo ">>> Ensuring modules.order and modules.builtin are preserved..."
+            zip -r9y "${GITHUB_WORKSPACE}/artifacts/Project24-Modules-${{ github.event.inputs.DEVICE }}-${{ github.event.inputs.KSU_VARIANT }}.zip" lib/*
+            echo "✅ Modules & metadata safely packed!"
+          else
+            echo "⚠️ No modules found to pack!"
+          fi
       - name: 📦 Package Artifacts & AnyKernel3
         run: |
           set -euo pipefail
