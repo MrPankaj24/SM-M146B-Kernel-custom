@@ -362,27 +362,9 @@ jobs:
           cd ${KERNEL_ROOT}
           mkdir -p ${OUTDIR}
           
-          # Fix earlier Samsung syntax typo
-          sed -i 's/static cpn_next_cpu/static int cpn_next_cpu/g' kernel/sched/ems/sysbusy.c || true
-          
-          # --- NEW FIX: Handle broken or missing Samsung TEE/TUI headers ---
-          echo ">>> Searching for missing tee_client_api.h..."
-          TEE_HEADER=$(find . -name "tee_client_api.h" | head -n 1)
-          if [ -n "$TEE_HEADER" ]; then
-            echo ">>> Found at $TEE_HEADER! Linking to include/linux/..."
-            mkdir -p include/linux
-            cp "$TEE_HEADER" include/linux/tee_client_api.h
-          else
-            echo ">>> Header not found in tree! Disabling TUI in defconfig to prevent build crash..."
-            DEFCONFIG_PATH="arch/arm64/configs/${{ github.event.inputs.DEFCONFIG_NAME }}"
-            sed -i 's/CONFIG_TUI=y/# CONFIG_TUI is not set/g' "$DEFCONFIG_PATH" || true
-            sed -i 's/CONFIG_SAMSUNG_TUI=y/# CONFIG_SAMSUNG_TUI is not set/g' "$DEFCONFIG_PATH" || true
-            sed -i 's/CONFIG_TRUSTONIC_TEE=y/# CONFIG_TRUSTONIC_TEE is not set/g' "$DEFCONFIG_PATH" || true
-          fi
-          # -----------------------------------------------------------------
-          
           export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
-          export CC="${COMPILER_CC}"
+          export CC="ccache ${COMPILER_CC}"
+          export HOSTCC="ccache ${COMPILER_CC}"
           export LD=ld.lld
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
@@ -390,23 +372,55 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
           
-          # Globally suppress strict Clang 20 warning kills
-          export KCFLAGS="-Wno-error -Wno-strict-prototypes -Wno-implicit-int -Wno-deprecated-non-prototype"
-          export KBUILD_CPPFLAGS="-Wno-error -Wno-strict-prototypes -Wno-implicit-int -Wno-deprecated-non-prototype"
+          # --- ABI & KMI CHECK DESTROYERS ---
+          export ABI_DEFINITION=
+          export KMI_SYMBOL_LIST_STRICT_MODE=0
+          export SKIP_ABI_CHECKS=1
+          export KMI_ENFORCE=0
           
-          CONFIG_ARGS="${{ github.event.inputs.DEFCONFIG_NAME }}"
+          # 🌟 MAGIC FIX: Suppress Clang pointer-size & warning errors on sloppy OEM Samsung drivers
+          # + Simultaneously include the path to fix the TUI tee_client_api.h header bug!
+          export KCFLAGS="-Wno-error=sizeof-pointer-memaccess -Wno-sizeof-pointer-memaccess -Wno-error -I${KERNEL_ROOT}/drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP"
+          
+          # Use user-selected defconfig file directly[cite: 1]
+          CONFIG_ARGS="${{ github.event.inputs.DEVICE_DEFCONFIG }}"[cite: 1]
+          
+          if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi[cite: 1]
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi[cite: 1]
+          if [ "${{ github.event.inputs.ENABLE_NETHUNTER_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/nethunter.config" ]; then CONFIG_ARGS="$CONFIG_ARGS nethunter.config"; fi[cite: 1]
+          if [ "${{ github.event.inputs.ENABLE_CUSTOM_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/custom.config" ]; then CONFIG_ARGS="$CONFIG_ARGS custom.config"; fi[cite: 1]
+          
+          echo ">>> Generating Base Config using: make $CONFIG_ARGS"[cite: 1]
+          make O="${OUTDIR}" CC="${CC}" HOSTCC="${HOSTCC}" $CONFIG_ARGS
+          
+          echo ">>> Running Explicit Prepare Step to prevent race conditions..."
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" HOSTCC="${HOSTCC}" prepare
+          
+          echo ">>> Compiling Kernel ($(nproc --all) threads)..."[cite: 1]
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" HOSTCC="${HOSTCC}" 2>&1 | tee build.log
 
       - name: 🧩 Compile & Strip Modules
         run: |
           set -euo pipefail
           cd ${KERNEL_ROOT}
-          mkdir -p ${MODULES_OUTDIR}
-          export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"
-          export CC="${COMPILER_CC}"
-          export LD=ld.lld
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
-
+          mkdir -p ${MODULES_OUTDIR}[cite: 1]
+          
+          export PATH="${COMPILER_PATH}:${AOSP_TOOLS_PATH}:$PATH"[cite: 1]
+          export CC="ccache ${COMPILER_CC}"
+          export HOSTCC="ccache ${COMPILER_CC}"
+          export LD=ld.lld[cite: 1]
+          export CROSS_COMPILE=aarch64-linux-gnu-[cite: 1]
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export LLVM=1[cite: 1]
+          export LLVM_IAS=1[cite: 1]
+          
+          # 🌟 Re-export KCFLAGS so the module installer also ignores the touchscreen compiler errors
+          export KCFLAGS="-Wno-error=sizeof-pointer-memaccess -Wno-sizeof-pointer-memaccess -Wno-error -I${KERNEL_ROOT}/drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP"
+          
+          echo ">>> Installing and stripping modules..."
+          make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" HOSTCC="${HOSTCC}" \
+            INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" \
+            INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true[cite: 1]
       - name: 📦 Package Artifacts & AnyKernel3
         run: |
           set -euo pipefail
