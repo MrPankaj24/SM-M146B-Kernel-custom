@@ -1,0 +1,301 @@
+name: ⚡ Custom Toolchain Build (SM-A14 / Pre-patched SUSFS v2.2.0)
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_SOURCE:
+        description: 'Kernel Source Repository URL'
+        required: true
+        default: 'https://github.com/MrPankaj24/SM-A14.git'
+      KERNEL_BRANCH:
+        description: 'Target Kernel Branch (Pre-patched SUSFS)'
+        required: true
+        default: 'susfs-2.2.0'
+      DEVICE_DEFCONFIG:
+        description: 'Target Defconfig File'
+        required: true
+        default: 's5e8535-a14xxx_defconfig'
+        
+      # --- KERNELSU VARIANT ---
+      KSU_VARIANT:
+        description: 'Select KernelSU Variant to Inject'
+        type: choice
+        options:
+          - 'ReSukiSU'
+          - 'KernelSU (Official)'
+          - 'KernelSU-Next'
+          - 'wksu'
+          - 'None'
+        default: 'ReSukiSU'
+      MANAGER_BRANCH:
+        description: 'Manager Branch (dev, main, canary, etc.)'
+        required: true
+        default: 'dev'
+
+      # --- EXTRA CONFIGS ---
+      ENABLE_SU_CONFIG:
+        description: 'Enable Generated su.config?'
+        type: boolean
+        default: true
+      ENABLE_PERF_CONFIG:
+        description: 'Enable perf.config?'
+        type: boolean
+        default: true
+      PERF_CONFIG_URL:
+        description: 'URL for perf.config'
+        required: false
+        default: 'https://github.com/MrPankaj24/kernel_patch/blob/main/perf.config'
+
+      MAKE_RELEASE:
+        description: 'Publish as GitHub Release?'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    name: 🏗️ Compile Kernel (${{ github.event.inputs.DEVICE_DEFCONFIG }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+
+    env:
+      KERNEL_ROOT: ${{ github.workspace }}/kernel_workspace
+      OUTDIR: ${{ github.workspace }}/kernel_workspace/out
+      MODULES_OUTDIR: ${{ github.workspace }}/kernel_workspace/modules_out
+      TOOLCHAIN_ROOT: ${{ github.workspace }}/toolchain
+      
+      # --- YOUR EXACT KERNEL ENVIRONMENT EXPORTS ---
+      PLATFORM_VERSION: 15
+      ANDROID_MAJOR_VERSION: t
+      BUILD_NUMBER: M146BXXUADYJ2
+      LLVM: 1
+      DEPMOD: depmod
+      ARCH: arm64
+      TARGET_SOC: s5e8535
+      DTC_FLAGS: "-@"
+
+    steps:
+      - name: 📥 Checkout Workflow Repository
+        uses: actions/checkout@v4
+
+      - name: 📦 Install Build Dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential make bc libncurses-dev bison flex \
+            python3 python3-setuptools python-is-python3 git ccache rsync \
+            libssl-dev libelf-dev dwarves device-tree-compiler \
+            file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
+            lz4 zstd cpio curl wget zip unzip tar xz-utils
+
+      - name: 🧹 Prepare Workspace Directories
+        run: |
+          set -euo pipefail
+          rm -rf "${KERNEL_ROOT}" "${TOOLCHAIN_ROOT}"
+          mkdir -p "${KERNEL_ROOT}" "${TOOLCHAIN_ROOT}"
+
+      - name: 📥 Clone Pre-Patched Kernel Source
+        run: |
+          echo ">>> Cloning Pre-patched Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
+          git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
+
+      - name: 🧰 Setup Custom Split Toolchain (Clang-14 + LLVM)
+        run: |
+          set -euo pipefail
+          echo ">>> Cloning custom split toolchain repository..."
+          git clone --depth=1 -b SM-M146B-Oneui7-ADYJ2 https://github.com/MrPankaj24/Samsung_Kernels_M14-wksu.git temp_toolchain_repo
+          
+          # Create exact target directory matching your PATH export
+          CLANG_DIR="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d"
+          mkdir -p "${CLANG_DIR}"
+          
+          echo ">>> Extracting all tar.xz archives into ${CLANG_DIR}..."
+          for archive in temp_toolchain_repo/*.tar.xz; do
+            if [ -f "$archive" ]; then
+              echo " -> Extracting $(basename "$archive")..."
+              tar -xf "$archive" -C "${CLANG_DIR}/"
+            fi
+          done
+          
+          # Clean up temporary clone and ensure binaries are executable
+          rm -rf temp_toolchain_repo
+          chmod -R +x "${CLANG_DIR}/bin" || true
+          echo "✅ Custom Clang toolchain assembled successfully!"
+
+      - name: ⬇️ Download & Map AOSP Kernel Build Tools
+        run: |
+          set -euo pipefail
+          echo ">>> Fetching Google prebuilt kernel-build-tools..."
+          mkdir -p "${TOOLCHAIN_ROOT}/prebuilts"
+          git clone --depth=1 -b main https://android.googlesource.com/kernel/prebuilts/build-tools "${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools"
+          
+          # Create symlink path to satisfy your exact second export PATH requirement
+          mkdir -p "${TOOLCHAIN_ROOT}/build/kernel/build-tools/path"
+          ln -sf "${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86" "${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86"
+          echo "✅ AOSP Build Tools mapped matching your exact directory layout!"
+
+      - name: 📝 Generate Clean su.config
+        if: github.event.inputs.ENABLE_SU_CONFIG == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+          cat > arch/arm64/configs/su.config << 'EOF'
+          CONFIG_KPROBES=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_KSU_MANUAL_HOOK=y
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_UH=n
+          CONFIG_RKP=n
+          CONFIG_KDP=n
+          CONFIG_SECURITY_DEFEX=n
+          CONFIG_PROCA=n
+          CONFIG_FIVE=n
+          CONFIG_MODULES=y
+          CONFIG_MODULE_FORCE_LOAD=y
+          CONFIG_MODULE_UNLOAD=y
+          CONFIG_MODULE_FORCE_UNLOAD=y
+          CONFIG_MODVERSIONS=y
+          CONFIG_MODULE_SIG=n
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
+          EOF
+          echo "✅ Generated arch/arm64/configs/su.config!"
+
+      - name: 📥 Fetch Extra Configs
+        run: |
+          cd ${KERNEL_ROOT}/arch/arm64/configs/
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ]; then
+            RAW_URL=$(echo "${{ github.event.inputs.PERF_CONFIG_URL }}" | sed 's/github.com/raw.githubusercontent.com/' | sed 's/\/blob\//\//')
+            curl -LSs "$RAW_URL" -o "perf.config"
+          fi
+
+      - name: 🛡️ Inject KernelSU Variant (No SUSFS Patching Required!)
+        run: |
+          cd ${KERNEL_ROOT}
+          rm -rf KernelSU drivers/kernelsu
+          CHOICE="${{ github.event.inputs.KSU_VARIANT }}"
+          BRANCH="${{ github.event.inputs.MANAGER_BRANCH }}"
+          
+          if [[ "$CHOICE" == "ReSukiSU" ]]; then
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/$BRANCH/kernel/setup.sh" | sed "s/main/$BRANCH/g" | bash -s "$BRANCH"
+            curl -LSs "https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/70_ksu_safety-resukisu-5.15.patch" -o ksu_safety.patch
+            cd KernelSU && patch -p1 --forward < ../ksu_safety.patch || true && cd ..
+            rm ksu_safety.patch
+          elif [[ "$CHOICE" == *"Official"* ]]; then
+            git clone -b $BRANCH https://github.com/tiann/KernelSU.git KernelSU || git clone https://github.com/tiann/KernelSU.git KernelSU
+            cd KernelSU && git checkout $BRANCH || true && cd ..
+            bash KernelSU/kernel/setup.sh
+          elif [[ "$CHOICE" == *"Next"* ]]; then
+            git clone -b $BRANCH https://github.com/rifsxd/KernelSU-Next.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/$BRANCH/kernel/setup.sh" | bash
+          elif [[ "$CHOICE" == "wksu" ]]; then
+            git clone -b $BRANCH https://github.com/WildKernels/Wild_KSU.git KernelSU
+            curl -LSs "https://raw.githubusercontent.com/WildKernels/Wild_KSU/$BRANCH/kernel/setup.sh" | bash -s $BRANCH
+          fi
+          
+          if [[ "$CHOICE" != "None" ]]; then
+            ln -sf ../KernelSU drivers/kernelsu
+            echo "✅ KernelSU ($CHOICE) injected. Skipping SUSFS patches since branch is pre-patched!"
+          fi
+
+      - name: 🔨 Compile Kernel Image
+        run: |
+          set -euo pipefail
+          cd ${KERNEL_ROOT}
+          mkdir -p ${OUTDIR}
+          
+          # --- APPLY YOUR EXACT COMPILER & LINKER EXPORTS ---
+          export PATH="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d/bin:${PATH}"
+          export PATH="${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86:${PATH}"
+          export HOSTCFLAGS="-I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include -isystem /usr/include"
+          export HOSTLDFLAGS="-L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
+          
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export LLVM_IAS=1
+          
+          CONFIG_ARGS="${{ github.event.inputs.DEVICE_DEFCONFIG }}"
+          if [ "${{ github.event.inputs.ENABLE_SU_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/su.config" ]; then CONFIG_ARGS="$CONFIG_ARGS su.config"; fi
+          if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
+          
+          echo ">>> Generating Defconfig: make $CONFIG_ARGS"
+          make O="${OUTDIR}" $CONFIG_ARGS
+          
+          echo ">>> Compiling Kernel ($(nproc --all) threads)..."
+          make -j$(nproc --all) O="${OUTDIR}" 2>&1 | tee build.log
+
+      - name: 🧩 Compile & Strip Modules
+        run: |
+          set -euo pipefail
+          cd ${KERNEL_ROOT}
+          mkdir -p ${MODULES_OUTDIR}
+          
+          export PATH="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d/bin:${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86:${PATH}"
+          export HOSTCFLAGS="-I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include -isystem /usr/include"
+          export HOSTLDFLAGS="-L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          
+          make -j$(nproc --all) O="${OUTDIR}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
+
+      - name: 📦 Package Artifacts & AnyKernel3
+        run: |
+          set -euo pipefail
+          mkdir -p ${GITHUB_WORKSPACE}/artifacts
+          git clone --depth=1 https://github.com/MrPankaj24/AnyKernel3.git ${GITHUB_WORKSPACE}/AnyKernel3
+          
+          if [ -f "${OUTDIR}/arch/arm64/boot/Image" ]; then
+            cp "${OUTDIR}/arch/arm64/boot/Image" "${GITHUB_WORKSPACE}/AnyKernel3/"
+          else
+            echo "❌ Kernel Image not found! Build failed." && exit 1
+          fi
+          
+          cd ${GITHUB_WORKSPACE}/AnyKernel3
+          rm -rf .git README.md
+          
+          SHORT_DEVICE=$(echo "${{ github.event.inputs.DEVICE_DEFCONFIG }}" | sed 's/_defconfig//')
+          AK3_ZIP_NAME="Project24-PrePatched-${SHORT_DEVICE}-${{ github.event.inputs.KSU_VARIANT }}.zip"
+          zip -r9 "${GITHUB_WORKSPACE}/artifacts/${AK3_ZIP_NAME}" ./*
+          echo "✅ AnyKernel3 Zip created: ${AK3_ZIP_NAME}"
+          
+          cd ${MODULES_OUTDIR}
+          if [ -d "lib" ]; then 
+            rm -f lib/modules/*/build lib/modules/*/source
+            zip -r9y "${GITHUB_WORKSPACE}/artifacts/Project24-Modules-${SHORT_DEVICE}-${{ github.event.inputs.KSU_VARIANT }}.zip" lib/*
+          fi
+
+      - name: ⬆️ Upload Action Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: P24-${{ github.event.inputs.DEVICE_DEFCONFIG }}-${{ github.event.inputs.KSU_VARIANT }}-build
+          path: ${{ github.workspace }}/artifacts/
+          retention-days: 7
+
+      - name: 🚀 Publish GitHub Release
+        if: github.event.inputs.MAKE_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Project 24 Pre-Patched Kernel (${{ github.event.inputs.DEVICE_DEFCONFIG }}) - Run ${{ github.run_number }}
+          tag_name: P24-${{ github.event.inputs.DEVICE_DEFCONFIG }}-Run${{ github.run_number }}
+          body: |
+            ### ⚡ Project 24 Kernel (Pre-Patched SUSFS v2.2.0 Tree)
+            **Defconfig:** `${{ github.event.inputs.DEVICE_DEFCONFIG }}`
+            **Root Variant:** `${{ github.event.inputs.KSU_VARIANT }}`
+            **Toolchain:** Custom Split Clang-14 (`SM-M146B-Oneui7-ADYJ2`)
+            **Kernel Source:** `MrPankaj24/SM-A14.git` (Branch: `${{ github.event.inputs.KERNEL_BRANCH }}`)
+          files: |
+            ${{ github.workspace }}/artifacts/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
