@@ -231,10 +231,12 @@ jobs:
           cd ${KERNEL_ROOT}
           mkdir -p ${OUTDIR}
           
-          # --- APPLY EXACT COMPILER, SYSROOT & LINKER EXPORTS ---
+          # --- APPLY EXACT COMPILER & LINKER EXPORTS ---
           export PATH="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d/bin:${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86:${PATH}"
-          export HOSTCFLAGS="--sysroot=${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot -I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include"
-          export HOSTLDFLAGS="--sysroot=${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
+          
+          # Dropped --sysroot and restored -isystem /usr/include to fix host tool compilation
+          export HOSTCFLAGS="-I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include -isystem /usr/include"
+          export HOSTLDFLAGS="-L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
           
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
