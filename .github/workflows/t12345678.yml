@@ -377,8 +377,8 @@ jobs:
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
           
-          export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
-          export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          export HOSTCFLAGS="-I${TOOLS_INC_DIR} -isystem /usr/include"
+          export HOSTLDFLAGS="-Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
           
           # Build config arguments list
           CONFIG_ARGS="${{ github.event.inputs.DEFCONFIG_NAME }}"
@@ -407,8 +407,8 @@ jobs:
           export LLVM_IAS=1
           export DEPMOD=depmod
           export DTC_FLAGS="-@"
-          export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
-          export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          export HOSTCFLAGS="-I${TOOLS_INC_DIR} -isystem /usr/include"
+          export HOSTLDFLAGS="-Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
           
           echo ">>> Installing and stripping modules..."
           make -j$(nproc --all) O="${OUTDIR}" CC="${CC}" \
