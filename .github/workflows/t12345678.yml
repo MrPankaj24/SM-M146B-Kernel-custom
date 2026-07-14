@@ -411,8 +411,8 @@ jobs:
           
           # --- 3. OPTIMIZATION & SAMSUNG HOST TOOLS ---
           export LTO=thin
-          export HOSTCFLAGS="--sysroot=${SYSROOT_DIR} -I${TOOLS_INC_DIR}"
-          export HOSTLDFLAGS="--sysroot=${SYSROOT_DIR} -Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
+          export HOSTCFLAGS="-I${TOOLS_INC_DIR} -isystem /usr/include"
+          export HOSTLDFLAGS="-Wl,-rpath,${TOOLS_LIB_DIR} -L${TOOLS_LIB_DIR} -fuse-ld=lld --rtlib=compiler-rt"
           
           # --- 4. SAMSUNG TUI HEADER BUG FIX ---
           export KCFLAGS="-I${KERNEL_ROOT}/drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP"
