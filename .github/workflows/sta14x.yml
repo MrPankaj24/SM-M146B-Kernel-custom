@@ -100,6 +100,13 @@ jobs:
           echo ">>> Cloning Pre-patched Kernel Source: ${{ github.event.inputs.KERNEL_BRANCH }}"
           git clone --depth=1 -b ${{ github.event.inputs.KERNEL_BRANCH }} ${{ github.event.inputs.KERNEL_SOURCE }} ${KERNEL_ROOT}
 
+      - name: 🩹 Patch Source Code Errors
+        run: |
+          cd ${KERNEL_ROOT}
+          # Fix missing type specifier in sysbusy.c
+          sed -i 's/static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c
+          echo "✅ Patched sysbusy.c missing type specifier!"
+
       - name: 🧰 Setup Custom Split Toolchain (Clang-14 + LLVM)
         run: |
           set -euo pipefail
@@ -170,7 +177,6 @@ jobs:
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_KSU_SUSFS_HARDENED=y
           CONFIG_UH=n
           CONFIG_RKP=n
           CONFIG_KDP=n
