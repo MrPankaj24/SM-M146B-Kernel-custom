@@ -103,9 +103,14 @@ jobs:
       - name: 🩹 Patch Source Code Errors
         run: |
           cd ${KERNEL_ROOT}
+          
           # Fix missing type specifier in sysbusy.c
           sed -i 's/static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c
           echo "✅ Patched sysbusy.c missing type specifier!"
+          
+          # Fix strict-prototypes error in filemap.c
+          sed -i 's/static void filemap_tracing_mark_end()/static void filemap_tracing_mark_end(void)/' mm/filemap.c
+          echo "✅ Patched filemap.c strict-prototypes error!"
 
       - name: 🧰 Setup Custom Split Toolchain (Clang-14 + LLVM)
         run: |
