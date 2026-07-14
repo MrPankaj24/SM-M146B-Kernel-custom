@@ -12,7 +12,7 @@ on:
         required: true
         default: 'susfs-2.2.0'
       DEVICE_DEFCONFIG:
-        description: 'Target Defconfig File'
+        description: 'Target Defconfig File (e.g. s5e8535-a14xxx_defconfig or a14x_defconfig)'
         required: true
         default: 's5e8535-a14xxx_defconfig'
         
@@ -65,7 +65,7 @@ jobs:
       MODULES_OUTDIR: ${{ github.workspace }}/kernel_workspace/modules_out
       TOOLCHAIN_ROOT: ${{ github.workspace }}/toolchain
       
-      # --- YOUR EXACT KERNEL ENVIRONMENT EXPORTS ---
+      # --- EXACT KERNEL ENVIRONMENT EXPORTS ---
       PLATFORM_VERSION: 15
       ANDROID_MAJOR_VERSION: t
       BUILD_NUMBER: M146BXXUADYJ2
@@ -87,7 +87,7 @@ jobs:
             python3 python3-setuptools python-is-python3 git ccache rsync \
             libssl-dev libelf-dev dwarves device-tree-compiler \
             file gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu sudo \
-            lz4 zstd cpio curl wget zip unzip tar xz-utils
+            lz4 zstd cpio curl wget zip unzip tar xz-utils lld llvm
 
       - name: 🧹 Prepare Workspace Directories
         run: |
@@ -106,7 +106,6 @@ jobs:
           echo ">>> Cloning custom split toolchain repository..."
           git clone --depth=1 -b SM-M146B-Oneui7-ADYJ2 https://github.com/MrPankaj24/Samsung_Kernels_M14-wksu.git temp_toolchain_repo
           
-          # Create exact target directory matching your PATH export
           CLANG_DIR="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d"
           mkdir -p "${CLANG_DIR}"
           
@@ -118,22 +117,36 @@ jobs:
             fi
           done
           
-          # Clean up temporary clone and ensure binaries are executable
+          echo ">>> Recreating essential LLVM/Clang symlinks stripped by tar/git..."
+          mkdir -p "${CLANG_DIR}/bin"
+          cd "${CLANG_DIR}/bin"
+          ln -sf lld ld.lld || true
+          ln -sf lld ld64.lld || true
+          ln -sf clang clang++ || true
+          ln -sf llvm-ar ar || true
+          ln -sf llvm-nm nm || true
+          ln -sf llvm-strip strip || true
+          ln -sf llvm-objdump objdump || true
+          ln -sf llvm-readelf readelf || true
+          ln -sf llvm-objcopy objcopy || true
+          cd -
+          
           rm -rf temp_toolchain_repo
           chmod -R +x "${CLANG_DIR}/bin" || true
-          echo "✅ Custom Clang toolchain assembled successfully!"
+          echo "✅ Custom Clang toolchain assembled and symlinked successfully!"
 
-      - name: ⬇️ Download & Map AOSP Kernel Build Tools
+      - name: ⬇️ Download & Map AOSP Kernel Build Tools & Sysroot
         run: |
           set -euo pipefail
           echo ">>> Fetching Google prebuilt kernel-build-tools..."
           mkdir -p "${TOOLCHAIN_ROOT}/prebuilts"
           git clone --depth=1 -b main https://android.googlesource.com/kernel/prebuilts/build-tools "${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools"
           
-          # Create symlink path to satisfy your exact second export PATH requirement
+          # Create exact symlink paths for BOTH binary path and sysroot
           mkdir -p "${TOOLCHAIN_ROOT}/build/kernel/build-tools/path"
           ln -sf "${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86" "${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86"
-          echo "✅ AOSP Build Tools mapped matching your exact directory layout!"
+          ln -sf "${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/sysroot" "${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot"
+          echo "✅ AOSP Build Tools & Sysroot mapped matching your exact directory layout!"
 
       - name: 📝 Generate Clean su.config
         if: github.event.inputs.ENABLE_SU_CONFIG == 'true'
@@ -157,6 +170,7 @@ jobs:
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_HARDENED=y
           CONFIG_UH=n
           CONFIG_RKP=n
           CONFIG_KDP=n
@@ -217,11 +231,10 @@ jobs:
           cd ${KERNEL_ROOT}
           mkdir -p ${OUTDIR}
           
-          # --- APPLY YOUR EXACT COMPILER & LINKER EXPORTS ---
-          export PATH="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d/bin:${PATH}"
-          export PATH="${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86:${PATH}"
-          export HOSTCFLAGS="-I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include -isystem /usr/include"
-          export HOSTLDFLAGS="-L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
+          # --- APPLY EXACT COMPILER, SYSROOT & LINKER EXPORTS ---
+          export PATH="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d/bin:${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86:${PATH}"
+          export HOSTCFLAGS="--sysroot=${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot -I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include"
+          export HOSTLDFLAGS="--sysroot=${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
           
           export CROSS_COMPILE=aarch64-linux-gnu-
           export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
@@ -232,10 +245,10 @@ jobs:
           if [ "${{ github.event.inputs.ENABLE_PERF_CONFIG }}" == "true" ] && [ -f "arch/arm64/configs/perf.config" ]; then CONFIG_ARGS="$CONFIG_ARGS perf.config"; fi
           
           echo ">>> Generating Defconfig: make $CONFIG_ARGS"
-          make O="${OUTDIR}" $CONFIG_ARGS
+          make O="${OUTDIR}" CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 $CONFIG_ARGS
           
           echo ">>> Compiling Kernel ($(nproc --all) threads)..."
-          make -j$(nproc --all) O="${OUTDIR}" 2>&1 | tee build.log
+          make -j$(nproc --all) O="${OUTDIR}" CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 2>&1 | tee build.log
 
       - name: 🧩 Compile & Strip Modules
         run: |
@@ -244,11 +257,11 @@ jobs:
           mkdir -p ${MODULES_OUTDIR}
           
           export PATH="${TOOLCHAIN_ROOT}/clang/host/linux-x86/clang-r450784d/bin:${TOOLCHAIN_ROOT}/build/kernel/build-tools/path/linux-x86:${PATH}"
-          export HOSTCFLAGS="-I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include -isystem /usr/include"
-          export HOSTLDFLAGS="-L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
+          export HOSTCFLAGS="--sysroot=${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot -I${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/include"
+          export HOSTLDFLAGS="--sysroot=${TOOLCHAIN_ROOT}/build/kernel/build-tools/sysroot -Wl,-rpath,${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -L ${TOOLCHAIN_ROOT}/prebuilts/kernel-build-tools/linux-x86/lib64 -fuse-ld=lld --rtlib=compiler-rt"
           export CROSS_COMPILE=aarch64-linux-gnu-
           
-          make -j$(nproc --all) O="${OUTDIR}" INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
+          make -j$(nproc --all) O="${OUTDIR}" CC=clang LD=ld.lld LLVM=1 LLVM_IAS=1 INSTALL_MOD_STRIP="--strip-debug --keep-section=.ARM.attributes" INSTALL_MOD_PATH="${MODULES_OUTDIR}" modules_install 2>&1 | tee -a build.log || true
 
       - name: 📦 Package Artifacts & AnyKernel3
         run: |
