@@ -361,6 +361,32 @@ jobs:
             patch -p1 --forward < bbg_fix.patch
           fi
 
+      - name: 🩹 Fix Samsung TUI Missing Header Bug
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Copying s5e8535 tee_client_api.h to global include directory..."
+          
+          # 1. Target the exact path from your screenshot for s5e8535
+          S5E8535_HEADER="drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP/tee_client_api.h"
+          TZDEV_HEADER="drivers/misc/tzdev/include/tzdev/tee_client_api.h"
+          
+          # 2. Copy it into include/linux/ so Clang finds it automatically
+          mkdir -p include/linux
+          
+          if [ -f "$S5E8535_HEADER" ]; then
+            echo "✅ Found GUD s5e8535 header! Copying to include/linux/..."
+            cp "$S5E8535_HEADER" include/linux/tee_client_api.h
+          elif [ -f "$TZDEV_HEADER" ]; then
+            echo "✅ Found TZDEV header! Copying to include/linux/..."
+            cp "$TZDEV_HEADER" include/linux/tee_client_api.h
+          else
+            echo "🔍 Fallback: Searching tree for any tee_client_api.h..."
+            FIND_HEADER=$(find drivers/ -name "tee_client_api.h" | head -n 1)
+            cp "$FIND_HEADER" include/linux/tee_client_api.h
+          fi
+          
+          echo "✅ Header patch complete!"
+
       - name: 🔨 Compile Kernel Image
         run: |
           set -euo pipefail
