@@ -146,8 +146,8 @@ jobs:
             git clone --depth 1 --filter=blob:none --sparse -b SM-M146B-Oneui7-ADYJ2 https://github.com/MrPankaj24/Samsung_Kernels_M14-wksu.git temp_repo
             cd temp_repo
             
-            # Sparse checkout BOTH the toolchain folder AND all 8 .tar.xz binary archives in one fast step!
-            git sparse-checkout set toolchain clang-14.tar.xz clang-check.tar.xz libLLVM-14git.so.tar.xz libLTO.so.14git.tar.xz libclang-cpp.so.14git.tar.xz libclang.so.13.tar.xz liblldb.so.14.0.6git.tar.xz lld.tar.xz
+            # 🌟 FIXED: Added --no-cone to allow pulling both folders and files seamlessly!
+            git sparse-checkout set --no-cone toolchain clang-14.tar.xz clang-check.tar.xz libLLVM-14git.so.tar.xz libLTO.so.14git.tar.xz libclang-cpp.so.14git.tar.xz libclang.so.13.tar.xz liblldb.so.14.0.6git.tar.xz lld.tar.xz
             
             echo ">>> Moving toolchain and archives into kernel workspace..."
             mv toolchain ${KERNEL_ROOT}/
@@ -202,7 +202,6 @@ jobs:
             echo "COMPILER_CC=clang" >> $GITHUB_ENV
           fi
 
-      # Skips external tool download if Pinned Repo is chosen since it already includes build-tools!
       - name: ⬇️ Download AOSP Kernel Build Tools
         if: "!contains(github.event.inputs.CLANG_VERSION, 'Pinned')"
         run: |
@@ -260,7 +259,6 @@ jobs:
           CONFIG_MODULE_SIG=n
           CONFIG_MODULE_COMPRESS=n
           CONFIG_TRIM_UNUSED_KSYMS=n
-
 
           # --- Kallsyms ---
           CONFIG_KALLSYMS=y
