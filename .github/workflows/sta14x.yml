@@ -6,15 +6,15 @@ on:
       KERNEL_SOURCE:
         description: 'Kernel Source Repository URL'
         required: true
-        default: 'https://github.com/MrPankaj24/SM-M146B-Kernel-Source.git'
+        default: 'https://github.com/MrPankaj24/SM-A14.git'
       KERNEL_BRANCH:
         description: 'Target Kernel Branch (Pre-patched SUSFS)'
         required: true
-        default: 'main'
+        default: 'susfs-2.2.0'
       DEVICE_DEFCONFIG:
         description: 'Target Defconfig File (e.g. s5e8535-a14xxx_defconfig or a14x_defconfig)'
         required: true
-        default: 's5e8535-m14xnsxx_defconfig'
+        default: 's5e8535-a14xxx_defconfig'
         
       # --- KERNELSU VARIANT ---
       KSU_VARIANT:
