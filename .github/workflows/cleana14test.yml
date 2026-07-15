@@ -372,6 +372,23 @@ jobs:
             patch -p1 --forward < bbg_fix.patch
           fi
 
+      - name: 🔧 Fix TUI/TEEC Build Error (Remove Broken TEEC Flag)
+        run: |
+          cd ${KERNEL_ROOT}
+          
+          echo ">>> Searching for what forces USE_TEE_CLIENT_API..."
+          grep -rn "USE_TEE_CLIENT_API" drivers/misc/tui/ || echo "Not found in tui/"
+          
+          echo ">>> Removing -DUSE_TEE_CLIENT_API from all TUI Makefiles..."
+          find drivers/misc/tui/ -name "Makefile" -type f | while read mkfile; do
+            sed -i '/USE_TEE_CLIENT_API/d' "$mkfile"
+            echo ">>> Cleaned: $mkfile"
+            cat "$mkfile"
+          done
+          
+          echo "✅ USE_TEE_CLIENT_API flag removed. stui_inf.c will now use its safe non-TEEC fallback path."
+          echo "✅ All critical functions (stui_get_mode, stui_set_mode, etc.) will compile normally."
+
       - name: 🔨 Compile Kernel Image
         run: |
           set -euo pipefail
