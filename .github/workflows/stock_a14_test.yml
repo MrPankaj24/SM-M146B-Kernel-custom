@@ -430,8 +430,8 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
 
-          # 🌟 FIX TUI / TRUSTZONE HEADER ERRORS FOR S5E8535
-          export KCFLAGS="-I${KERNEL_ROOT}/drivers/gud/gud-s5e8535/MobiCoreDriver/public/GP -I${KERNEL_ROOT}/drivers/misc/tzdev/include/tzdev -I${KERNEL_ROOT}/drivers/misc/tzdev/include"
+          # Remove the GUD path — it provides an INCOMPATIBLE tee_client_api.h
+          export KCFLAGS="-I${KERNEL_ROOT}/drivers/misc/tzdev/include/tzdev -I${KERNEL_ROOT}/drivers/misc/tzdev/include"
           
           # 🌟 Dynamically inject Pinned Toolchain HOSTCFLAGS & HOSTLDFLAGS if selected
           if [ "${USE_PINNED_HOST_FLAGS:-false}" == "true" ]; then
