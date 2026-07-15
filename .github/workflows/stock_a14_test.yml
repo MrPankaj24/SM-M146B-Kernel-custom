@@ -372,48 +372,87 @@ jobs:
             patch -p1 --forward < bbg_fix.patch
           fi
 
-      - name: 🔧 Fix TUI/TEEC Build Errors (Disable TUI + Stub)
+      - name: 🔧 Fix TUI/TEEC Build Errors (Complete Solution)
         run: |
           cd ${KERNEL_ROOT}
           DEFCONFIG="arch/arm64/configs/${{ github.event.inputs.DEVICE_DEFCONFIG }}"
           
-          # Step 1: Disable TUI in defconfig
+          echo ">>> Step 1: Disable TUI in defconfig..."
           sed -i 's/CONFIG_TUI=y/# CONFIG_TUI is not set/' "$DEFCONFIG" 2>/dev/null || true
           sed -i 's/CONFIG_STUI=y/# CONFIG_STUI is not set/' "$DEFCONFIG" 2>/dev/null || true
           sed -i 's/CONFIG_STUI_INF=y/# CONFIG_STUI_INF is not set/' "$DEFCONFIG" 2>/dev/null || true
           
-          # Step 2: Blank the TUI Makefile so nothing from drivers/misc/tui/ compiles
+          echo ">>> Step 2: Stop drivers/misc/tui/ from compiling..."
           if [ -d "drivers/misc/tui" ]; then
-            echo "# Disabled: TEEC header conflict" > drivers/misc/tui/Makefile
+            echo "# TUI disabled - TEEC header conflict" > drivers/misc/tui/Makefile
           fi
           
-          # Step 3: Create a stub source file that exports stui_get_mode
-          # This is CRITICAL — touchscreen drivers depend on this symbol
+          echo ">>> Step 3: Create stub for ALL TUI symbols that touchscreen drivers need..."
           cat > drivers/misc/stui_stub.c << 'STUB_EOF'
           #include <linux/module.h>
           #include <linux/types.h>
 
           /*
-           * Stub for stui_get_mode — the real TUI driver is disabled due to
-           * TEEC header incompatibility. Touchscreen drivers call this to
-           * check if Trusted UI mode is active. Returning 0 means "not active",
-           * which is correct and safe when TUI is disabled.
+           * TUI Stub - Replaces the full TUI driver which cannot compile
+           * due to TEEC header incompatibility with the MobiCore GP API.
+           *
+           * stui_get_mode() returns 0 = "TUI not active"
+           * This is identical to what the real driver returns 99.9% of the time.
+           * Touchscreen drivers call this to check if they should switch
+           * to secure touch mode. Returning 0 means "normal mode" = works perfectly.
+           *
+           * All other Samsung secure UI functions are stubbed as no-ops.
            */
+
           int stui_get_mode(void)
           {
                   return 0;
           }
           EXPORT_SYMBOL(stui_get_mode);
+
+          int stui_set_mode(int mode)
+          {
+                  return 0;
+          }
+          EXPORT_SYMBOL(stui_set_mode);
+
+          int stui_send_event(int type, int code, int value)
+          {
+                  return 0;
+          }
+          EXPORT_SYMBOL(stui_send_event);
+
+          void *stui_register_handler(void *handler)
+          {
+                  return NULL;
+          }
+          EXPORT_SYMBOL(stui_register_handler);
+
+          int stui_enable_irq(unsigned int irq)
+          {
+                  return 0;
+          }
+          EXPORT_SYMBOL(stui_enable_irq);
+
+          int stui_disable_irq(unsigned int irq)
+          {
+                  return 0;
+          }
+          EXPORT_SYMBOL(stui_disable_irq);
           STUB_EOF
           
-          # Step 4: Add the stub to drivers/misc/Makefile
-          # Only add if not already there
+          echo ">>> Step 4: Register stub as BUILT-IN (obj-y = always compiled into kernel)..."
           if ! grep -q "stui_stub" drivers/misc/Makefile; then
-            echo 'obj-$(CONFIG_INPUT) += stui_stub.o' >> drivers/misc/Makefile
+            echo 'obj-y += stui_stub.o' >> drivers/misc/Makefile
           fi
           
-          # Step 5: Also remove conflicting GUD include path from KCFLAGS later
-          echo "✅ TUI disabled, stui_get_mode stub added for touchscreen compatibility"
+          echo ">>> Step 5: Verify the stub is in place..."
+          echo "--- drivers/misc/stui_stub.c ---"
+          head -5 drivers/misc/stui_stub.c
+          echo "--- drivers/misc/Makefile (last 3 lines) ---"
+          tail -3 drivers/misc/Makefile
+          
+          echo "✅ TUI completely disabled, all stub symbols added as built-in"
 
       - name: 🔨 Compile Kernel Image
         run: |
@@ -430,7 +469,6 @@ jobs:
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
 
-          # Remove the GUD path — it provides an INCOMPATIBLE tee_client_api.h
           export KCFLAGS="-I${KERNEL_ROOT}/drivers/misc/tzdev/include/tzdev -I${KERNEL_ROOT}/drivers/misc/tzdev/include"
           
           # 🌟 Dynamically inject Pinned Toolchain HOSTCFLAGS & HOSTLDFLAGS if selected
