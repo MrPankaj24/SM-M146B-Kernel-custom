@@ -372,23 +372,48 @@ jobs:
             patch -p1 --forward < bbg_fix.patch
           fi
 
-      - name: 🔧 Fix TUI/TEEC Build Errors
+      - name: 🔧 Fix TUI/TEEC Build Errors (Disable TUI + Stub)
         run: |
           cd ${KERNEL_ROOT}
           DEFCONFIG="arch/arm64/configs/${{ github.event.inputs.DEVICE_DEFCONFIG }}"
           
-          # Disable TUI — not needed for custom kernels, fixes TEEC header mismatch
+          # Step 1: Disable TUI in defconfig
           sed -i 's/CONFIG_TUI=y/# CONFIG_TUI is not set/' "$DEFCONFIG" 2>/dev/null || true
           sed -i 's/CONFIG_STUI=y/# CONFIG_STUI is not set/' "$DEFCONFIG" 2>/dev/null || true
           sed -i 's/CONFIG_STUI_INF=y/# CONFIG_STUI_INF is not set/' "$DEFCONFIG" 2>/dev/null || true
           
-          # Blank the TUI Makefile so nothing from drivers/misc/tui/ gets built
+          # Step 2: Blank the TUI Makefile so nothing from drivers/misc/tui/ compiles
           if [ -d "drivers/misc/tui" ]; then
             echo "# Disabled: TEEC header conflict" > drivers/misc/tui/Makefile
           fi
           
-          # Also remove the conflicting GUD include from KCFLAGS if present later
-          echo "✅ TUI disabled to resolve TEEC header conflict"
+          # Step 3: Create a stub source file that exports stui_get_mode
+          # This is CRITICAL — touchscreen drivers depend on this symbol
+          cat > drivers/misc/stui_stub.c << 'STUB_EOF'
+          #include <linux/module.h>
+          #include <linux/types.h>
+
+          /*
+           * Stub for stui_get_mode — the real TUI driver is disabled due to
+           * TEEC header incompatibility. Touchscreen drivers call this to
+           * check if Trusted UI mode is active. Returning 0 means "not active",
+           * which is correct and safe when TUI is disabled.
+           */
+          int stui_get_mode(void)
+          {
+                  return 0;
+          }
+          EXPORT_SYMBOL(stui_get_mode);
+          STUB_EOF
+          
+          # Step 4: Add the stub to drivers/misc/Makefile
+          # Only add if not already there
+          if ! grep -q "stui_stub" drivers/misc/Makefile; then
+            echo 'obj-$(CONFIG_INPUT) += stui_stub.o' >> drivers/misc/Makefile
+          fi
+          
+          # Step 5: Also remove conflicting GUD include path from KCFLAGS later
+          echo "✅ TUI disabled, stui_get_mode stub added for touchscreen compatibility"
 
       - name: 🔨 Compile Kernel Image
         run: |
