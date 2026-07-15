@@ -354,23 +354,23 @@ jobs:
           echo ">>> Cleaning up patch repository..."
           rm -rf temp_patch_repo
 
-      - name: 🔒 Inject Baseband Guard (BBG)
-        run: |
-          cd ${KERNEL_ROOT}
-          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE_DEFCONFIG }}"
-          if [ -f "$DEFCONFIG_FILE" ]; then
-            echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
-            echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
-            echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
-          fi
-          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
-          
-          BBG_C_FILE=$(find . -name "baseband_guard.c" | head -n 1)
-          if [ -n "$BBG_C_FILE" ] && grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
-            curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
-            patch -p1 --forward < bbg_fix.patch
-          fi
+#      - name: 🔒 Inject Baseband Guard (BBG)
+#        run: |
+#          cd ${KERNEL_ROOT}
+#          curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
+#          DEFCONFIG_FILE="arch/arm64/configs/${{ github.event.inputs.DEVICE_DEFCONFIG }}"
+#          if [ -f "$DEFCONFIG_FILE" ]; then
+#            echo "CONFIG_BBG=y" >> "$DEFCONFIG_FILE"
+#            echo "CONFIG_LOG_BUF_SHIFT=20" >> "$DEFCONFIG_FILE"
+#            echo 'CONFIG_LSM="landlock,lockdown,yama,loadpin,safesetid,integrity,selinux,smack,tomoyo,apparmor,bpf,baseband_guard"' >> "$DEFCONFIG_FILE"
+#          fi
+#          sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
+#          
+#          BBG_C_FILE=$(find . -name "baseband_guard.c" | head -n 1)
+#          if [ -n "$BBG_C_FILE" ] && grep -q "get_link(dentry, inode, NULL)" "$BBG_C_FILE"; then
+#            curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
+#            patch -p1 --forward < bbg_fix.patch
+#          fi
 
       - name: 🔧 Fix TUI/TEEC Build Error (Remove Broken TEEC Flag)
         run: |
