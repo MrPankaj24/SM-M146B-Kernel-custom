@@ -237,6 +237,10 @@ jobs:
           CONFIG_KALLSYMS_ALL=y
           # 🌟 ELIXIR FIX: Force NTSYNC to compile built-in to prevent external modpost errors
           CONFIG_NTSYNC=y
+          #Maintener
+          CONFIG_LOCALVERSION_AUTO=n
+          CONFIG_LOCALVERSION="@MrPankaj24"
+          #CONFIG_DEFAULT_HOSTNAME="MrPankaj24"
           EOF
           
           echo "✅ Generated arch/arm64/configs/su.config successfully!"
