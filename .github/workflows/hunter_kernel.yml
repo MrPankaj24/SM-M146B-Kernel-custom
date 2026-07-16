@@ -241,6 +241,9 @@ jobs:
           CONFIG_LOCALVERSION_AUTO=n
           CONFIG_LOCALVERSION="@MrPankaj24"
           #CONFIG_DEFAULT_HOSTNAME="MrPankaj24"
+
+          # CONFIG_SECURITY_SELINUX_ALWAYS_ENFORCE is not set
+          CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y
           EOF
           
           echo "✅ Generated arch/arm64/configs/su.config successfully!"
