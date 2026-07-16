@@ -384,6 +384,9 @@ jobs:
           export LLVM=1
           export LLVM_IAS=1
           export DTC_FLAGS="-@"
+          export PLATFORM_VERSION=15
+          export ANDROID_MAJOR_VERSION=t
+  
           
           # Use user-selected defconfig file directly
           CONFIG_ARGS="${{ github.event.inputs.DEVICE_DEFCONFIG }}"
