@@ -25,6 +25,12 @@ on:
         required: true
         default: 'a14x_defconfig'
         
+      # --- TOOLCHAIN FIXES ---
+      ENABLE_CLANG20_FIX:
+        description: 'Fix Clang-20/22 sizeof-pointer-memaccess OVT Touchscreen error? (Check if using Clang 20/22)'
+        type: boolean
+        default: true
+        
       # --- KERNELSU & SUSFS CONFIGS ---
       KSU_VARIANT:
         description: 'Select KernelSU Variant'
@@ -369,6 +375,15 @@ jobs:
             curl -LSs "https://raw.githubusercontent.com/WildKernels/kernel_patches/main/experimental/bbg/bbg_fix_get_link.patch" -o bbg_fix.patch
             patch -p1 --forward < bbg_fix.patch
           fi
+
+      - name: 🛠️ Fix Clang-20+ sizeof-pointer-memaccess Error
+        if: github.event.inputs.ENABLE_CLANG20_FIX == 'true'
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Patching OVT touchscreen driver for newer Clang compatibility..."
+          # Replace incorrect sizeof(pointer) with the actual allocated buffer size constant SEC_CMD_STR_LEN
+          find drivers/input/touchscreen/ovt/ -type f -name "*.c" -exec sed -i 's/sizeof(tcm_hcd->print_buf)/SEC_CMD_STR_LEN/g' {} +
+          echo "✅ Patch applied successfully!"
 
       - name: 🔨 Compile Kernel Image
         run: |
