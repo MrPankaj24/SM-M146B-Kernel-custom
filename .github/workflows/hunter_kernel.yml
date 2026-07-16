@@ -242,8 +242,12 @@ jobs:
           CONFIG_LOCALVERSION="@MrPankaj24"
           #CONFIG_DEFAULT_HOSTNAME="MrPankaj24"
 
-          # CONFIG_SECURITY_SELINUX_ALWAYS_ENFORCE is not set
-          CONFIG_SECURITY_SELINUX_ALWAYS_PERMISSIVE=y
+          # --- SELinux Permissive Configuration ---
+          CONFIG_SECURITY_SELINUX=y
+          CONFIG_SECURITY_SELINUX_DEVELOP=y
+          CONFIG_SECURITY_SELINUX_BOOTPARAM=y
+          CONFIG_SECURITY_SELINUX_BOOTPARAM_VALUE=0
+          # CONFIG_ALWAYS_ENFORCING is not set
           EOF
           
           echo "✅ Generated arch/arm64/configs/su.config successfully!"
