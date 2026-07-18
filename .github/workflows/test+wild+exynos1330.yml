@@ -300,6 +300,17 @@ jobs:
             download_config "${{ github.event.inputs.CUSTOM_CONFIG_URL }}" "custom.config"
           fi
 
+      - name: 🛑 Apply Disable CECs+ Patch
+        run: |
+          cd ${KERNEL_ROOT}
+          echo ">>> Downloading Disable CECs+ patch..."
+          curl -LSs "https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/1330/test/Disable_CECs%2B.patch" -o disable_cecs.patch
+          
+          echo ">>> Applying Disable CECs+ patch..."
+          patch -p1 --forward < disable_cecs.patch || true
+          rm disable_cecs.patch
+          echo "✅ Disable CECs+ patch applied successfully!"
+
       - name: 📥 Fetch & Apply DroidSpaces Patch
         run: |
           cd ${KERNEL_ROOT}
