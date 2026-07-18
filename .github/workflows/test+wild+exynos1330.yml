@@ -490,6 +490,23 @@ jobs:
           echo ">>> Adjusting internal alarmtimer wakeup structural constraints..."
           sed -i 's/pm_wakeup_event(dev, 2 \* MSEC_PER_SEC);/pm_wakeup_event(dev, ktime_to_ms(min) + 1);/' kernel/time/alarmtimer.c
 
+      - name: 🔗 Fix Variant Include Dirs for Out-of-Tree Build
+        run: |
+          set -euo pipefail
+          cd ${KERNEL_ROOT}
+          mkdir -p ${OUTDIR}/include
+          # Samsung kernels use -Iinclude/variantN (relative paths) in LINUXINCLUDE.
+          # With O= builds, these resolve against the output dir where they don't exist.
+          # Newer Clang (20+) errors on missing -I dirs via -Wmissing-include-dirs + -Werror.
+          # Fix: symlink all variant dirs from source tree into output tree.
+          for variant_dir in include/variant*; do
+            if [ -d "$variant_dir" ]; then
+              dir_name=$(basename "$variant_dir")
+              ln -sfn "${KERNEL_ROOT}/include/${dir_name}" "${OUTDIR}/include/${dir_name}"
+              echo "✅ Symlinked include/${dir_name} → ${OUTDIR}/include/${dir_name}"
+            fi
+          done
+      
       - name: 🧼 Remove -dirty tag (Commit all changes)
         run: |
           cd ${KERNEL_ROOT}
