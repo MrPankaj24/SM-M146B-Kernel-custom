@@ -304,10 +304,10 @@ jobs:
         run: |
           cd ${KERNEL_ROOT}
           echo ">>> Downloading Disable CECs+ patch..."
-          curl -LSs "https://raw.githubusercontent.com/MrPankaj24/kernel_patch/main/1330/test/Disable_CECs%2B.patch" -o disable_cecs.patch
+          curl -LSs "https://raw.githubusercontent.com/MrPankaj24/kernel_patch/refs/heads/main/for_devhunter1/CRCs_disable.patch" -o CRCs_disable.patch
           
           echo ">>> Applying Disable CECs+ patch..."
-          patch -p1 --forward < disable_cecs.patch || true
+          patch -p1 --forward < CRCs_disable.patch || true
           rm disable_cecs.patch
           echo "✅ Disable CECs+ patch applied successfully!"
 
