@@ -66,6 +66,11 @@ on:
         type: boolean
         default: true
 
+      ENABLE_CECS_PATCH:
+        description: 'Apply Disable CECs+ Patch?'
+        type: boolean
+        default: true  
+
       ENABLE_SU_CONFIG:
         description: 'Enable Generated su.config (KernelSU, SUSFS, Anti-Root Bypass)?'
         type: boolean
